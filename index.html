@@ -8826,7 +8826,6 @@ function navigateImageModal(direction) {
   });
 }
 
-
 // ✅ Global Chat State
 const marketChatState = {
   currentReceiverUid: null,
@@ -8841,16 +8840,16 @@ if (firebase.firestore) {
   });
 }
 
+// ✅ Firestore helpers
+const chatsCol = () => db.collection("marketChats");
+const chatIdFor = (a, b) => [a, b].sort().join("_");
+const chatMessagesCol = (uidA, uidB) => chatsCol().doc(chatIdFor(uidA, uidB)).collection("messages");
+
 // ✅ Initialize after Auth
 firebase.auth().onAuthStateChanged(user => {
   marketChatState.currentUserId = user?.uid || null;
-
   if (user) {
-    // ✅ Load user's chat list
-    loadMyChats();
-
-    // ✅ Start listening for incoming messages in real-time
-    listenForIncomingChats();
+    loadMyChats(); // Load user's chat list
   }
 });
 
@@ -8871,7 +8870,6 @@ function createTextAvatar(name) {
   avatar.style.marginRight = "10px";
   return avatar;
 }
-
 // ✅ Open chat with a market user
 function openMarketChat(receiverUid, posterName) {
   if (!marketChatState.currentUserId) {
@@ -8879,23 +8877,34 @@ function openMarketChat(receiverUid, posterName) {
     return;
   }
 
+  // Set current receiver UID
   marketChatState.currentReceiverUid = receiverUid;
-  document.getElementById("marketChatName").innerText = posterName;
-  document.getElementById("marketChatModal").style.display = "flex"; // Open the chat modal
 
-  loadMessagesFromLocal(receiverUid);  // Load saved messages
-  loadMarketMessagesRealtime(receiverUid); // Listen for real-time messages
-  markMessagesAsRead(receiverUid);  // Mark messages as read
+  // Update chat header with poster's name
+  const chatNameEl = document.getElementById("marketChatName");
+  if (chatNameEl) chatNameEl.innerText = posterName;
 
-  document.getElementById("marketSendBtn").onclick = sendMarketMessage; // Attach send button
+  // Open chat modal
+  const chatModal = document.getElementById("marketChatModal");
+  if (chatModal) chatModal.style.display = "flex";
+
+  // Load previously saved messages from localStorage
+  loadMessagesFromLocal(receiverUid);
+
+  // Listen for real-time messages from Firestore
+  loadMarketMessagesRealtime(receiverUid);
+
+  // Mark messages as read (optional for UI/read tracking)
+  markMessagesAsRead(receiverUid);
+
+  // Attach send button
+  const sendBtn = document.getElementById("marketSendBtn");
+  if (sendBtn) sendBtn.onclick = sendMarketMessage;
 
   // ✅ Attach Delete Entire Chat button
   const deleteBtn = document.getElementById("deleteChatBtn");
-  if (deleteBtn) {
-    deleteBtn.onclick = () => deleteEntireChat(receiverUid);
-  }
+  if (deleteBtn) deleteBtn.onclick = () => deleteEntireChat(receiverUid);
 }
-
 
 function closeMarketChat() {
   document.getElementById("marketChatModal").style.display = "none";
@@ -8903,31 +8912,38 @@ function closeMarketChat() {
   marketChatState.unsubscribeMessages = null;
 }
 
-// ✅ Send message (with sender name)
+// ✅ Send message (with sender name) — stored under marketChats/{chatId}/messages
 async function sendMarketMessage() {
   const input = document.getElementById("marketChatInput");
   const message = input.value.trim();
   if (!message) return alert("Please enter a message!");
 
   const senderName = firebase.auth().currentUser?.displayName || "You";
+  const me = marketChatState.currentUserId;
+  const them = marketChatState.currentReceiverUid;
+  const chatId = chatIdFor(me, them);
   const tempId = "temp_" + Date.now();
 
+  // Local UI message (pending)
   const msgData = {
     id: tempId,
-    senderId: marketChatState.currentUserId,
-    receiverId: marketChatState.currentReceiverUid,
-    senderName: senderName,
+    chatId,
+    senderId: me,
+    receiverId: them,
+    senderName,
     message,
-    participants: [marketChatState.currentUserId, marketChatState.currentReceiverUid].sort(),
+    participants: [me, them].sort(),
     status: "sending",
-    timestamp: new Date()
+    timestamp: Date.now() // ✅ safe for UI only
   };
 
-  addMessageToUI(msgData, true); // Immediate UI feedback
-  saveMessageToLocal(marketChatState.currentReceiverUid, msgData);
+  addMessageToUI(msgData, true); 
+  saveMessageToLocal(them, msgData);
 
   try {
-    await db.collection("marketChats").add({
+    // ✅ Store properly in Firestore with server timestamp
+    const docRef = await chatMessagesCol(me, them).add({
+      chatId,
       senderId: msgData.senderId,
       receiverId: msgData.receiverId,
       senderName: msgData.senderName,
@@ -8937,18 +8953,25 @@ async function sendMarketMessage() {
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
     });
 
+    // ✅ Update UI to "sent"
+    msgData.id = docRef.id;
+    msgData.status = "sent";
+    addMessageToUI(msgData);
+    saveMessageToLocal(them, msgData);
+
     input.value = "";
     showChatAlert("Message sent ✅", "green");
 
-    if (typeof loadMyChats === "function") loadMyChats(); // Refresh chats list
+    if (typeof loadMyChats === "function") loadMyChats();
   } catch (error) {
     console.error("Error sending message:", error);
     msgData.status = "failed";
     addMessageToUI(msgData);
-    saveMessageToLocal(marketChatState.currentReceiverUid, msgData);
+    saveMessageToLocal(them, msgData);
     showChatAlert("Failed to send ❌", "red");
   }
 }
+
 
 // ✅ Retry queued messages (offline support)
 async function retryQueuedMessages() {
@@ -8970,47 +8993,34 @@ function sendMarketQuick(text) {
   sendMarketMessage();
 }
 
-// ✅ Realtime messages with sender names & full date/time
 function loadMarketMessagesRealtime(receiverUid) {
   if (marketChatState.unsubscribeMessages) marketChatState.unsubscribeMessages();
 
-  const messagesContainer = document.getElementById("marketChatMessages");
-  messagesContainer.innerHTML = "<p class='chat-loading'>Loading...</p>";
+  const me = marketChatState.currentUserId;
+  const chatId = chatIdFor(me, receiverUid);
+  const container = document.getElementById("marketChatMessages");
+  container.innerHTML = "<p class='chat-loading'>Loading...</p>";
 
-  marketChatState.unsubscribeMessages = db.collection("marketChats")
-    .where("participants", "array-contains", marketChatState.currentUserId)
-    .where("participants", "array-contains", receiverUid)
+  marketChatState.unsubscribeMessages = chatMessagesCol(me, receiverUid)
     .orderBy("timestamp", "asc")
     .onSnapshot(async snapshot => {
-      let messages = JSON.parse(localStorage.getItem(`marketChat_${receiverUid}`) || "[]");
-      const messageMap = new Map(messages.map(m => [m.id, m]));
-
+      const messages = [];
       for (let doc of snapshot.docs) {
         let data = doc.data();
-        let msgTimestamp = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
+        data.formattedTime = data.timestamp?.toDate 
+          ? data.timestamp.toDate().toLocaleString() 
+          : new Date().toLocaleString();
 
-        if (!data.senderName) {
-          try {
-            const userDoc = await db.collection("users").doc(data.senderId).get();
-            data.senderName = userDoc.exists && userDoc.data().name ? userDoc.data().name : "Unknown";
-          } catch (err) { data.senderName = "Unknown"; }
-        }
-
-        data.formattedTime = msgTimestamp.toLocaleString("en-US", {
-          weekday: "long", year: "numeric", month: "long", day: "numeric",
-          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
-        });
-
-        messageMap.set(doc.id, { id: doc.id, ...data, timestamp: msgTimestamp });
+        messages.push({ id: doc.id, ...data });
       }
 
-      const mergedMessages = Array.from(messageMap.values()).sort((a,b) => (a.timestamp?.getTime?.() || 0) - (b.timestamp?.getTime?.() || 0));
-      messagesContainer.innerHTML = "";
-      mergedMessages.forEach(msg => addMessageToUI(msg));
-      localStorage.setItem(`marketChat_${receiverUid}`, JSON.stringify(mergedMessages));
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      container.innerHTML = "";
+      messages.forEach(msg => addMessageToUI(msg));
+      container.scrollTop = container.scrollHeight;
+      localStorage.setItem(`marketChat_${receiverUid}`, JSON.stringify(messages));
     });
 }
+
 
 // ✅ Load messages from localStorage
 function loadMessagesFromLocal(receiverUid) {
@@ -9034,13 +9044,14 @@ function saveMessageToLocal(receiverUid, message) {
   localStorage.setItem(`marketChat_${receiverUid}`, JSON.stringify(messages));
 }
 
-// ✅ Mark messages as read
+// ✅ Mark messages as read (nested collection)
 function markMessagesAsRead(receiverUid) {
   const now = firebase.firestore.FieldValue.serverTimestamp();
+  const me = marketChatState.currentUserId;
 
-  db.collection("marketChats")
+  chatMessagesCol(me, receiverUid)
     .where("senderId", "==", receiverUid)
-    .where("receiverId", "==", marketChatState.currentUserId)
+    .where("receiverId", "==", me)
     .where("status", "==", "sent")
     .get()
     .then(snapshot => {
@@ -9052,7 +9063,7 @@ function markMessagesAsRead(receiverUid) {
       });
       localStorage.setItem(`marketChat_${receiverUid}`, JSON.stringify(updatedMessages));
       return batch.commit();
-    });
+    }).catch(err => console.error("markMessagesAsRead error", err));
 }
 
 // ✅ Chat alerts
@@ -9070,12 +9081,12 @@ function showChatAlert(text, color) {
   setTimeout(() => alertBox.style.display = "none", 2000);
 }
 
-/// ✅ Load My Chats list with unread badge
+// ✅ Load My Chats (collectionGroup over messages)
 async function loadMyChats() {
   const chatList = document.getElementById("chatList");
   chatList.innerHTML = "<p style='color:gray; text-align:center;'>Loading your chats...</p>";
 
-  db.collection("marketChats")
+  db.collectionGroup("messages")
     .where("participants", "array-contains", marketChatState.currentUserId)
     .orderBy("timestamp", "desc")
     .onSnapshot(snapshot => {
@@ -9087,25 +9098,27 @@ async function loadMyChats() {
 
       chatList.innerHTML = "";
       const conversations = {};
-      let totalUnread = 0; // Count unread messages
+      let totalUnread = 0;
 
       snapshot.forEach(doc => {
         const msg = doc.data();
-        const otherUser = msg.senderId === marketChatState.currentUserId ? msg.receiverId : msg.senderId;
+        const chatId = msg.chatId;
 
-        // Only keep the latest message per conversation
-        if (!conversations[otherUser] || msg.timestamp?.toMillis() > conversations[otherUser].timestamp?.toMillis()) {
-          conversations[otherUser] = { ...msg, otherUser };
+        // ✅ Keep only the latest message per chatId
+        if (!conversations[chatId] || msg.timestamp?.toMillis() > conversations[chatId].timestamp?.toMillis()) {
+          conversations[chatId] = msg;
         }
 
-        // Count unread messages for badge
+        // ✅ Count unread
         if (msg.receiverId === marketChatState.currentUserId && msg.status !== "read") {
           totalUnread++;
         }
       });
 
+      // ✅ Render chat list
       Object.values(conversations).forEach(chat => {
         const div = document.createElement("div");
+        div.className = "chat-item";
         div.style.display = "flex";
         div.style.alignItems = "center";
         div.style.padding = "10px";
@@ -9117,20 +9130,22 @@ async function loadMyChats() {
         left.style.alignItems = "center";
         left.style.gap = "8px";
 
-        // Text avatar using first letter of senderName
         const avatar = createTextAvatar(chat.senderName || "U");
         left.appendChild(avatar);
 
         const textWrapper = document.createElement("div");
 
         const name = document.createElement("strong");
-        name.textContent = chat.senderId === marketChatState.currentUserId
-          ? "You → " + chat.receiverId
-          : chat.senderName;
+        name.textContent =
+          chat.senderId === marketChatState.currentUserId
+            ? "You → " + chat.receiverId
+            : chat.senderName || chat.receiverId;
         textWrapper.appendChild(name);
 
         const snippet = document.createElement("div");
-        snippet.textContent = chat.message.length > 35 ? chat.message.slice(0, 35) + "…" : chat.message;
+        const lastMsg = chat.message || "";
+        snippet.textContent =
+          lastMsg.length > 35 ? lastMsg.slice(0, 35) + "…" : lastMsg;
         snippet.style.fontSize = "12px";
         snippet.style.color = "#666";
         textWrapper.appendChild(snippet);
@@ -9138,15 +9153,13 @@ async function loadMyChats() {
         left.appendChild(textWrapper);
         div.appendChild(left);
 
-        div.onclick = () => openMarketChat(
-          chat.otherUser,
-          chat.senderId === marketChatState.currentUserId ? chat.receiverId : chat.senderName
-        );
+        // ✅ Determine other user from participants
+        const otherUser = chat.senderId === marketChatState.currentUserId ? chat.receiverId : chat.senderId;
+        div.onclick = () => openMarketChat(otherUser, chat.senderName || otherUser);
 
         chatList.appendChild(div);
       });
 
-      // ✅ Update unread badge
       updateMyChatsBadge(totalUnread);
     });
 }
@@ -9162,7 +9175,6 @@ function updateMyChatsBadge(count) {
     badge.style.display = "none";
   }
 }
-
 
 // ✅ Add message to chat window with text avatars & options
 function addMessageToUI(msgData, isTemporary = false) {
@@ -9209,105 +9221,106 @@ function addMessageToUI(msgData, isTemporary = false) {
   statusSpan.className = "msg-status";
   updateMessageStatus(statusSpan, msgData);
   textContainer.appendChild(statusSpan);
-// ✅ Message options (Delete / Copy) with styled menu & custom confirmation
-const optionsButton = document.createElement("button");
-optionsButton.textContent = "⋮";
-optionsButton.style.position = "absolute";
-optionsButton.style.top = "0";
-optionsButton.style.right = "-30px";
-optionsButton.style.background = "transparent";
-optionsButton.style.border = "none";
-optionsButton.style.cursor = "pointer";
-optionsButton.style.fontSize = "18px";
 
-const optionsMenu = document.createElement("div");
-optionsMenu.style.position = "absolute";
-optionsMenu.style.top = "20px";
-optionsMenu.style.right = "-30px";
-optionsMenu.style.background = "#fff";
-optionsMenu.style.border = "1px solid #ccc";
-optionsMenu.style.borderRadius = "8px";
-optionsMenu.style.display = "none";
-optionsMenu.style.zIndex = "1000";
-optionsMenu.style.minWidth = "120px";
-optionsMenu.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
-optionsMenu.style.padding = "5px 0";
+  // ✅ Message options (Delete / Copy) with styled menu & custom confirmation
+  const optionsButton = document.createElement("button");
+  optionsButton.textContent = "⋮";
+  optionsButton.style.position = "absolute";
+  optionsButton.style.top = "0";
+  optionsButton.style.right = "-30px";
+  optionsButton.style.background = "transparent";
+  optionsButton.style.border = "none";
+  optionsButton.style.cursor = "pointer";
+  optionsButton.style.fontSize = "18px";
 
-optionsMenu.innerHTML = `
-  <button class="delete-msg" style="display:block; width:100%; padding:8px 10px; border:none; background:#ffdddd; color:#d8000c; cursor:pointer; text-align:left; font-weight:bold; border-bottom:1px solid #f5c6cb;">Delete</button>
-  <button class="copy-msg" style="display:block; width:100%; padding:8px 10px; border:none; background:#e7f3fe; color:#00529b; cursor:pointer; text-align:left; font-weight:bold;">Copy</button>
-`;
-
-optionsButton.onclick = (e) => {
-  e.stopPropagation();
-  optionsMenu.style.display = optionsMenu.style.display === "none" ? "block" : "none";
-};
-
-// ✅ Custom Delete Confirmation
-optionsMenu.querySelector(".delete-msg").onclick = async () => {
-  optionsMenu.style.display = "none"; // hide menu first
-
-  // ✅ Create custom confirmation modal
-const confirmDiv = document.createElement("div");
-confirmDiv.style.position = "fixed";
-confirmDiv.style.top = "0";
-confirmDiv.style.left = "0";
-confirmDiv.style.width = "100%";
-confirmDiv.style.height = "100%";
-confirmDiv.style.background = "rgba(0,0,0,0.6)";
-confirmDiv.style.display = "flex";
-confirmDiv.style.justifyContent = "center";
-confirmDiv.style.alignItems = "center";
-confirmDiv.style.zIndex = "10000"; // <<<<<<<<<< set higher than chat modal
-
-  confirmDiv.innerHTML = `
-    <div style="background:white; padding:20px; border-radius:8px; text-align:center; width:300px;">
-      <h3 style="color:#d8000c; margin-bottom:15px;">⚠️ Delete Message?</h3>
-      <p style="margin-bottom:20px; color:#333;">Are you sure you want to delete this message?</p>
-      <button id="confirmDeleteYes" style="margin-right:10px; padding:8px 15px; background:#d8000c; color:white; border:none; border-radius:5px; cursor:pointer;">Yes</button>
-      <button id="confirmDeleteNo" style="padding:8px 15px; background:#ccc; color:#333; border:none; border-radius:5px; cursor:pointer;">No</button>
-    </div>
-  `;
-  document.body.appendChild(confirmDiv);
-
-  confirmDiv.querySelector("#confirmDeleteYes").onclick = async () => {
-    if (msgData.id.startsWith("temp_")) {
-      let messages = JSON.parse(localStorage.getItem(`marketChat_${marketChatState.currentReceiverUid}`) || "[]");
-      messages = messages.filter(m => m.id !== msgData.id);
-      localStorage.setItem(`marketChat_${marketChatState.currentReceiverUid}`, JSON.stringify(messages));
-    } else {
-      await db.collection("marketChats").doc(msgData.id).delete();
-    }
-    msgDiv.remove();
-    confirmDiv.remove();
-    showChatAlert("Message deleted ✅", "red");
-  };
-
-  confirmDiv.querySelector("#confirmDeleteNo").onclick = () => {
-    confirmDiv.remove();
-  };
-};
-
-// Copy remains the same
-optionsMenu.querySelector(".copy-msg").onclick = () => {
-  navigator.clipboard.writeText(msgData.message)
-    .then(() => showChatAlert("Message copied to clipboard ✅", "green"))
-    .catch(err => console.error("Failed to copy:", err));
+  const optionsMenu = document.createElement("div");
+  optionsMenu.style.position = "absolute";
+  optionsMenu.style.top = "20px";
+  optionsMenu.style.right = "-30px";
+  optionsMenu.style.background = "#fff";
+  optionsMenu.style.border = "1px solid #ccc";
+  optionsMenu.style.borderRadius = "8px";
   optionsMenu.style.display = "none";
-};
+  optionsMenu.style.zIndex = "1000";
+  optionsMenu.style.minWidth = "120px";
+  optionsMenu.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
+  optionsMenu.style.padding = "5px 0";
 
-textContainer.appendChild(optionsButton);
-textContainer.appendChild(optionsMenu);
-msgDiv.appendChild(textContainer);
+  optionsMenu.innerHTML = `
+    <button class="delete-msg" style="display:block; width:100%; padding:8px 10px; border:none; background:#ffdddd; color:#d8000c; cursor:pointer; text-align:left; font-weight:bold; border-bottom:1px solid #f5c6cb;">Delete</button>
+    <button class="copy-msg" style="display:block; width:100%; padding:8px 10px; border:none; background:#e7f3fe; color:#00529b; cursor:pointer; text-align:left; font-weight:bold;">Copy</button>
+  `;
 
-if (isTemporary) msgDiv.style.opacity = "0.5";
-messagesContainer.appendChild(msgDiv);
-messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  optionsButton.onclick = (e) => {
+    e.stopPropagation();
+    optionsMenu.style.display = optionsMenu.style.display === "none" ? "block" : "none";
+  };
 
-// Hide options when clicking outside
-document.addEventListener("click", e => {
-  if (!textContainer.contains(e.target)) optionsMenu.style.display = "none";
-});
+  // ✅ Custom Delete Confirmation
+  optionsMenu.querySelector(".delete-msg").onclick = async () => {
+    optionsMenu.style.display = "none"; // hide menu first
+
+    const confirmDiv = document.createElement("div");
+    confirmDiv.style.position = "fixed";
+    confirmDiv.style.top = "0";
+    confirmDiv.style.left = "0";
+    confirmDiv.style.width = "100%";
+    confirmDiv.style.height = "100%";
+    confirmDiv.style.background = "rgba(0,0,0,0.6)";
+    confirmDiv.style.display = "flex";
+    confirmDiv.style.justifyContent = "center";
+    confirmDiv.style.alignItems = "center";
+    confirmDiv.style.zIndex = "10000"; // higher than chat modal
+
+    confirmDiv.innerHTML = `
+      <div style="background:white; padding:20px; border-radius:8px; text-align:center; width:300px;">
+        <h3 style="color:#d8000c; margin-bottom:15px;">⚠️ Delete Message?</h3>
+        <p style="margin-bottom:20px; color:#333;">Are you sure you want to delete this message?</p>
+        <button id="confirmDeleteYes" style="margin-right:10px; padding:8px 15px; background:#d8000c; color:white; border:none; border-radius:5px; cursor:pointer;">Yes</button>
+        <button id="confirmDeleteNo" style="padding:8px 15px; background:#ccc; color:#333; border:none; border-radius:5px; cursor:pointer;">No</button>
+      </div>
+    `;
+    document.body.appendChild(confirmDiv);
+
+    confirmDiv.querySelector("#confirmDeleteYes").onclick = async () => {
+      if (msgData.id?.startsWith?.("temp_")) {
+        let messages = JSON.parse(localStorage.getItem(`marketChat_${marketChatState.currentReceiverUid}`) || "[]");
+        messages = messages.filter(m => m.id !== msgData.id);
+        localStorage.setItem(`marketChat_${marketChatState.currentReceiverUid}`, JSON.stringify(messages));
+      } else if (msgData.firestorePath) {
+        // delete from Firestore using stored path
+        await db.doc(msgData.firestorePath).delete();
+      }
+      msgDiv.remove();
+      confirmDiv.remove();
+      showChatAlert("Message deleted ✅", "red");
+    };
+
+    confirmDiv.querySelector("#confirmDeleteNo").onclick = () => {
+      confirmDiv.remove();
+    };
+  };
+
+  // ✅ Copy
+  optionsMenu.querySelector(".copy-msg").onclick = () => {
+    navigator.clipboard.writeText(msgData.message)
+      .then(() => showChatAlert("Message copied to clipboard ✅", "green"))
+      .catch(err => console.error("Failed to copy:", err));
+    optionsMenu.style.display = "none";
+  };
+
+  textContainer.appendChild(optionsButton);
+  textContainer.appendChild(optionsMenu);
+  msgDiv.appendChild(textContainer);
+
+  if (isTemporary) msgDiv.style.opacity = "0.5";
+  messagesContainer.appendChild(msgDiv);
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+  // Hide options when clicking outside
+  document.addEventListener("click", e => {
+    if (!textContainer.contains(e.target)) optionsMenu.style.display = "none";
+  });
 }
 
 // ✅ Update message status (ticks)
@@ -9322,33 +9335,13 @@ function updateMessageStatus(statusElement, msgData) {
     statusElement.textContent = "";
   }
 }
-function listenForIncomingChats() {
-  const user = firebase.auth().currentUser;
-  if (!user) return;
-
-  db.collection("marketChats") // ✅ same as sendMarketMessage
-    .where("participants", "array-contains", user.uid)
-    .orderBy("timestamp", "desc")
-    .onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === "added") {
-          const chat = change.doc.data();
-          // Only show messages sent to this user
-          if (chat.receiverId === user.uid || chat.senderId === user.uid) {
-            renderChat(chat, change.doc.id, true);
-          }
-        }
-      });
-    });
-}
-
 
 // ✅ Auto-load "My Chats" on page load
 document.addEventListener("DOMContentLoaded", () => {
   loadMyChats();
 });
 
-// ✅ Delete entire chat with a user (modern modal)
+// ✅ Delete entire chat with a user (nested collection)
 async function deleteEntireChat(otherUserId) {
   if (!marketChatState.currentUserId) return;
 
@@ -9368,10 +9361,10 @@ async function deleteEntireChat(otherUserId) {
 
   confirmDiv.innerHTML = `
     <div style="
-      background: #fff; 
-      padding: 25px; 
-      border-radius: 10px; 
-      text-align: center; 
+      background: #fff;
+      padding: 25px;
+      border-radius: 10px;
+      text-align: center;
       width: 320px;
       box-shadow: 0 8px 20px rgba(0,0,0,0.25);
       font-family: Arial, sans-serif;
@@ -9382,22 +9375,22 @@ async function deleteEntireChat(otherUserId) {
       </p>
       <div style="display:flex; justify-content:center; gap:10px;">
         <button id="confirmDeleteAllYes" style="
-          padding:10px 20px; 
-          background:#d8000c; 
-          color:white; 
-          border:none; 
-          border-radius:6px; 
+          padding:10px 20px;
+          background:#d8000c;
+          color:white;
+          border:none;
+          border-radius:6px;
           font-weight:bold;
           cursor:pointer;
           transition:0.2s;
         " onmouseover="this.style.background='#a60000'" onmouseout="this.style.background='#d8000c'">Yes</button>
 
         <button id="confirmDeleteAllNo" style="
-          padding:10px 20px; 
-          background:#ccc; 
-          color:#333; 
-          border:none; 
-          border-radius:6px; 
+          padding:10px 20px;
+          background:#ccc;
+          color:#333;
+          border:none;
+          border-radius:6px;
           font-weight:bold;
           cursor:pointer;
           transition:0.2s;
@@ -9410,20 +9403,17 @@ async function deleteEntireChat(otherUserId) {
 
   // ✅ If user confirms deletion
   confirmDiv.querySelector("#confirmDeleteAllYes").onclick = async () => {
-    // Delete from Firestore
-    const snapshot = await db.collection("marketChats")
-      .where("participants", "array-contains", marketChatState.currentUserId)
-      .get();
+    const me = marketChatState.currentUserId;
+    const chatId = chatIdFor(me, otherUserId);
 
+    // Delete all messages in subcollection
+    const snap = await chatsCol().doc(chatId).collection("messages").get();
     const batch = db.batch();
-    snapshot.docs.forEach(doc => {
-      const data = doc.data();
-      if (data.participants.includes(otherUserId)) {
-        batch.delete(doc.ref);
-      }
-    });
-
+    snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
+
+    // Optionally, delete the empty chat container doc (not required)
+    // await chatsCol().doc(chatId).delete().catch(() => {});
 
     // Delete from localStorage
     localStorage.removeItem(`marketChat_${otherUserId}`);
@@ -9443,6 +9433,28 @@ async function deleteEntireChat(otherUserId) {
   confirmDiv.querySelector("#confirmDeleteAllNo").onclick = () => {
     confirmDiv.remove();
   };
+}
+
+// ✅ Listen for messages between me & them
+function listenForMarketMessages(me, them) {
+  // Stop old listener if exists
+  if (marketChatState.unsubscribeMessages) {
+    marketChatState.unsubscribeMessages();
+  }
+
+  const ref = chatMessagesCol(me, them)
+    .orderBy("timestamp", "asc");
+
+  marketChatState.unsubscribeMessages = ref.onSnapshot(snapshot => {
+    snapshot.docChanges().forEach(change => {
+      const msg = { id: change.doc.id, ...change.doc.data() };
+
+      if (change.type === "added") {
+        addMessageToUI(msg, false);
+        saveMessageToLocal(them, msg);
+      }
+    });
+  });
 }
 
 
@@ -10570,33 +10582,13 @@ function filterMarketItems() {
   // Using requestAnimationFrame for smooth DOM updates
   requestAnimationFrame(filterItems);
 }
+// ✅ Show payment modal for any type: boost, unlock, verification
 function showPaymentModalFor(type, amount, itemId, itemName) {
-  // ✅ Decide modal title dynamically
-  let titleText = "";
-  let bodyText = "";
-
-  if (type === "boost") {
-    titleText = "Pay to Boost";
-    bodyText = `Pay Ksh ${amount} to boost your job "${itemName}".`;
-  } 
-  else if (type === "unlock") {
-    titleText = "Pay to Unlock Contacts";
-    bodyText = `Pay Ksh ${amount} to unlock contacts for "${itemName}".`;
-  } 
-  else if (type === "verify" || type === "swapVerification" || type === "serviceVerification" || type === "marketVerification" || type === "soulmateVerification") {
-    titleText = "Pay for Verification";  // Correct for verification
-    bodyText = `Pay Ksh ${amount} to get your job "${itemName}" verified.`;
-  } 
-  else {
-    titleText = "Payment";
-    bodyText = `Pay Ksh ${amount} for "${itemName}".`;
-  }
-
   const modalHTML = `
     <div id="universalPayModal" class="modal" style="display:block; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999;">
       <div class="modal-content" style="margin:10% auto; padding:20px; background:#f9f9ff; border:2px solid #4CAF50; width:80%; max-width:400px; border-radius:10px; text-align:center; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
-        <h3 style="color:#2c3e50;">${titleText}: <span style="color:#4CAF50;">${itemName}</span></h3>
-        <p style="font-size:16px;">${bodyText}</p>
+        <h3 style="color:#2c3e50;">${type === "boost" ? "Boost" : type === "unlock" ? "Unlock Contacts" : "Verification"}: <span style="color:#4CAF50;">${itemName}</span></h3>
+        <p style="font-size:16px;">Pay Ksh ${amount} for "${itemName}".</p>
         <input type="tel" id="universalPhone" placeholder="Enter your MPESA number (e.g. 0712345678)"
                style="padding: 10px; width:100%; margin-bottom:10px; border:1px solid #ccc; border-radius:6px;" />
         <button onclick="initiateStkPayment('${type}', ${amount}, '${itemId}', '${itemName}')"
@@ -10615,145 +10607,89 @@ function showPaymentModalFor(type, amount, itemId, itemName) {
   document.body.insertAdjacentHTML("beforeend", modalHTML);
 }
 
-function closeUniversalModal() {
-  const modal = document.getElementById("universalPayModal");
-  if (modal) modal.remove();
-}
-
-// ✅ Unified STK Push Handler with unlock + boost + verification logic
+// ✅ Initiates STK Push and uses consistent accountReference
 async function initiateStkPayment(type, amount, itemId, itemName) {
   const phone = document.getElementById("universalPhone").value.trim();
   const statusEl = document.getElementById("universalPaymentStatus");
-
   if (!/^07\d{8}$/.test(phone)) {
     statusEl.innerText = "⚠️ Please enter a valid Safaricom number";
     return;
   }
 
   statusEl.innerText = "⏳ Sending STK Push...";
+  const userId = currentUser?.uid || "anonymous";
+  const accountReference = `${type}_${itemId}_${userId}`; // ✅ Consistent reference
 
   try {
     const response = await fetch("http://localhost:3000/stkpush", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        phone,
-        amount,
-        accountReference: type,
-        itemId,
-        itemName,
-        userId: currentUser?.uid || "anonymous"
-      })
+      body: JSON.stringify({ phone, amount, accountReference, itemId, itemName, userId })
     });
 
     const data = await response.json();
-
     if (data.success) {
       statusEl.innerText = "✅ STK Push sent. Please complete payment on your phone.";
 
-      const now = new Date();
-      const isoNow = now.toISOString();
-      const userRef = currentUser?.uid ? firebase.firestore().collection("users").doc(currentUser.uid) : null;
-
-      // === Existing boosts & unlocks ===
-      if (type === "soulmate") {
-        const boostExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-        await firebase.firestore().collection("soulmates").doc(itemId).update({
-          boosted: true,
-          boostExpiry: boostExpiry
-        });
-        showCustomAlert("✅ Soulmate profile boosted successfully!", "success");
-        loadSoulmates();
-      }
-      if (type === "bomjobs") {
-        await userRef.set({ paidForBomJobs: isoNow }, { merge: true });
-        localStorage.setItem("paidForBomJobs", isoNow);
-      }
-      if (type === "market") {
-        await userRef.set({ paidToPostMarket: true }, { merge: true });
-        localStorage.setItem("paidToPostMarket", "yes");
-      }
-      if (type === "service") {
-        await userRef.set({ paidForService: true }, { merge: true });
-        localStorage.setItem("paidForService", "yes");
-      }
-      if (type === "boost") {
-        await firebase.firestore().collection("boostedItems").doc(itemId).set({
-          boostedAt: isoNow,
-          itemName,
-          userId: currentUser?.uid
-        }, { merge: true });
-        localStorage.setItem(`boosted_${itemId}`, isoNow);
-      }
-
-      // === NEW: Verification badge handling ===
-      if (type === "serviceVerification") {
-        await servicesRef.doc(itemId).set({ verified: true }, { merge: true });
-        showCustomAlert("✅ Service verified successfully!", "success");
-        loadServices();
-      }
-      if (type === "marketVerification") {
-        await marketRef.doc(itemId).set({ verified: true }, { merge: true });
-        showCustomAlert("✅ Market item verified successfully!", "success");
-        loadMarketItems();
-      }
-      if (type === "soulmateVerification") {
-        await soulmateRef.doc(itemId).set({ verified: true }, { merge: true });
-        showCustomAlert("✅ Soulmate profile verified successfully!", "success");
-        loadSoulmates();
-      }
-
-      closeUniversalModal();
+      // ✅ Listen to Firestore payments collection for this accountReference
+      const paymentRef = firebase.firestore().collection("payments").doc(accountReference);
+      const unsubscribe = paymentRef.onSnapshot(async (doc) => {
+        if (doc.exists && doc.data().status === "paid") {
+          // Payment completed, update boosts/unlocks/verifications
+          handlePaymentSuccess(type, itemId, itemName, userId);
+          unsubscribe(); // stop listening
+          closeUniversalModal();
+        }
+      });
 
     } else {
       statusEl.innerText = `❌ Error: ${data.errorMessage || "Unknown failure"}`;
     }
-
   } catch (err) {
     statusEl.innerText = "❌ Network error: " + err.message;
   }
 }
 
-// ✅ Helper to trigger boost modal
-function boostItem(itemId, itemName) {
-  const amount = 100; 
-  showPaymentModalFor("boost", amount, itemId, itemName);
+// ✅ Handles Firestore updates after payment
+async function handlePaymentSuccess(type, itemId, itemName, userId) {
+  const now = new Date();
+  const isoNow = now.toISOString();
+  const userRef = userId !== "anonymous" ? firebase.firestore().collection("users").doc(userId) : null;
+
+  if (type === "soulmate") {
+    const boostExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    await firebase.firestore().collection("soulmates").doc(itemId).update({ boosted: true, boostExpiry });
+    showCustomAlert("✅ Soulmate profile boosted successfully!", "success");
+    loadSoulmates();
+  }
+  if (type === "boost") {
+    await firebase.firestore().collection("boostedItems").doc(itemId).set({ boostedAt: isoNow, itemName, userId }, { merge: true });
+    localStorage.setItem(`boosted_${itemId}`, isoNow);
+  }
+  if (type === "unlock") {
+    await userRef.set({ paidToUnlock: isoNow }, { merge: true });
+    localStorage.setItem("paidToUnlock", isoNow);
+  }
+  if (type === "serviceVerification") {
+    await servicesRef.doc(itemId).set({ verified: true }, { merge: true });
+    showCustomAlert("✅ Service verified successfully!", "success");
+    loadServices();
+  }
+  if (type === "marketVerification") {
+    await marketRef.doc(itemId).set({ verified: true }, { merge: true });
+    showCustomAlert("✅ Market item verified successfully!", "success");
+    loadMarketItems();
+  }
+  if (type === "soulmateVerification") {
+    await soulmateRef.doc(itemId).set({ verified: true }, { merge: true });
+    showCustomAlert("✅ Soulmate profile verified successfully!", "success");
+    loadSoulmates();
+  }
 }
 
-function payForVerification(type, itemId, itemName) {
-  // ✅ If admin, skip payment and verify instantly
-  const adminEmails = [
-    "mashabiki@teacherswapskenya.com",
-    "sironga1@teacherswapskenya.com",
-    "admin1@teacherswapskenya.com"
-  ];
-
-  if (currentUser && adminEmails.includes(currentUser.email)) {
-    if (type === "serviceVerification") {
-      servicesRef.doc(itemId).set({ verified: true }, { merge: true });
-      showCustomAlert("✅ Service verified by Admin!", "success");
-      loadServices();
-    }
-    if (type === "marketVerification") {
-      marketRef.doc(itemId).set({ verified: true }, { merge: true });
-      showCustomAlert("✅ Market item verified by Admin!", "success");
-      loadMarketItems();
-    }
-    if (type === "soulmateVerification") {
-      soulmateRef.doc(itemId).set({ verified: true }, { merge: true });
-      showCustomAlert("✅ Soulmate profile verified by Admin!", "success");
-      loadSoulmates();
-    }
-    return; // stop here, no payment needed
-  }
-
-  // ✅ If not admin, proceed to normal payment
-  let amount = 100; // default fallback
-  if (type === "serviceVerification") amount = 250;
-  if (type === "marketVerification") amount = 500;
-  if (type === "soulmateVerification") amount = 200;
-
-  showPaymentModalFor(type, amount, itemId, itemName);
+function closeUniversalModal() {
+  const modal = document.getElementById("universalPayModal");
+  if (modal) modal.remove();
 }
 
 function showToast(message, type = "info") {
