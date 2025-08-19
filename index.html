@@ -2786,18 +2786,22 @@ button:hover {
     <label for="bomJobType">Type of Job Opportunity:</label>
     <input type="text" id="bomJobType" placeholder="e.g. Teaching, House Manager, Cook" required />
 
-    <label for="bomPhone">Contact (Phone Number):</label>
-    <input type="tel" id="bomPhone" placeholder="e.g. 0712345678" required />
+<label for="bomContact">Contact (Phone Number or Link):</label>
+<input type="text" id="bomContact" placeholder="e.g. 0712345678 or https://t.me/username" required />
+<small style="color:gray;">Enter a phone number or a link (WhatsApp, Telegram, etc.)</small>
+
+   <label for="bomCounty">County:</label>
+    <select id="bomCounty" required>
+      <option value="">Select County</option>
+    </select>
 
     <label for="bomSubCounty">Sub-county:</label>
     <select id="bomSubCounty" required>
       <option value="">Select Sub-county</option>
     </select>
 
-    <label for="bomCounty">County:</label>
-    <select id="bomCounty" required>
-      <option value="">Select County</option>
-    </select>
+
+ 
 
     <label for="bomSalaryRange">Expected Salary Range (Ksh):</label>
     <input type="text" id="bomSalaryRange" placeholder="e.g. 15000 - 25000" required />
@@ -5411,15 +5415,30 @@ document.getElementById("bomJobForm").addEventListener("submit", async e => {
   document.getElementById("bomDate").value = fullDate;
   document.getElementById("bomPostedBy").value = capitalize(firstName);
 
+  // Optional contact (phone or link)
+  const contactInput = document.getElementById("bomContact")?.value.trim() || "";
+  let phone = document.getElementById("bomPhone")?.value.trim() || "";
+  let contact = contactInput || phone;
+
+  // If the contact input looks like a link, store it as contact; otherwise, store as phone
+  if (contactInput.startsWith("http") || contactInput.startsWith("www")) {
+    contact = contactInput;
+    phone = "";
+  }
+
   const job = {
     organization: document.getElementById("bomOrg").value.trim(),
     jobType: document.getElementById("bomJobType").value.trim(),
-    phone: document.getElementById("bomPhone").value.trim(),
+    phone: phone,           // numeric phone if any
+    contact: contact,       // optional link or phone
     subCounty: document.getElementById("bomSubCounty").value,
     county: document.getElementById("bomCounty").value,
     salaryRange: document.getElementById("bomSalaryRange").value.trim(),
     datePosted: fullDate,
-    postedBy: capitalize(firstName),
+    postedBy: currentUser.uid, // ✅ store UID
+    posterName: currentUser.displayName || capitalize(firstName), // ✅ readable name
+    isClosed: false, // ✅ default status
+    verified: false, // ✅ default verification
     timestamp: firebase.firestore.FieldValue.serverTimestamp()
   };
 
@@ -5427,7 +5446,7 @@ document.getElementById("bomJobForm").addEventListener("submit", async e => {
   document.getElementById("loadingSpinner").style.display = "flex";
 
   try {
-    // ✅ Save job to Firestore
+    const bomRef = db.collection("bomJobs");
     await bomRef.add(job);
 
     // ✅ Show success message
@@ -5443,7 +5462,7 @@ document.getElementById("bomJobForm").addEventListener("submit", async e => {
     // ✅ Admin Notification
     await db.collection("adminNotifications").add({
       type: "BOM Job Post",
-      message: `New job posted: ${job.jobType} by ${job.organization}, Salary: ${job.salaryRange}, Phone: ${job.phone}, County: ${job.county}`,
+      message: `New job posted: ${job.jobType} by ${job.organization}, Salary: ${job.salaryRange}, Contact: ${contact || phone}, County: ${job.county}`,
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       read: false
     });
@@ -5451,20 +5470,18 @@ document.getElementById("bomJobForm").addEventListener("submit", async e => {
     // ✅ Public Alert (visible to all users)
     const alertDoc = await db.collection("alerts").add({
       title: "📢 New Job",
-      message: `${job.organization} just posted a ${job.jobType} job in ${job.county}, ${job.subCounty}. 💰 Salary: ${job.salaryRange}`,
+      message: `${job.organization} just posted a ${job.jobType} job in ${job.county}, ${job.subCounty}. 💰 Salary: ${job.salaryRange}${contact ? " | Contact: " + contact : ""}`,
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       targetUserId: null,
-      category: "bom",  // helpful for filtering by type
+      category: "bom",
       county: job.county
     });
 
     console.log("✅ BOM alert created with ID:", alertDoc.id);
 
   } catch (err) {
-    // ✅ Show error message
     showCustomAlert("❌ Error posting job: " + err.message, "error");
   } finally {
-    // ✅ Hide the loading spinner once the job is posted or an error occurs
     document.getElementById("loadingSpinner").style.display = "none";
   }
 });
@@ -5480,7 +5497,7 @@ function notifyMatchingServiceProviders(job) {
       const countyMatch = service.svcCounty === job.county;
 
       if (occupationMatch && countyMatch) {
-        const message = `🛎 Job Opportunity Matching Your Services!\nJob: ${job.jobType}\nPosted by: ${job.postedBy}\nPhone: ${job.phone}\nCounty: ${job.county}`;
+        const message = `🛎 Job Opportunity Matching Your Services!\nJob: ${job.jobType}\nPosted by: ${job.posterName}\nPhone: ${job.phone}\nCounty: ${job.county}`;
 
         db.collection("notifications").add({
           userId: doc.id, // Or svcPhone as unique key
@@ -5496,18 +5513,19 @@ function notifyMatchingServiceProviders(job) {
 function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
+
 let bomJobsCache = [];
 let jobToDeleteId = null;
 let trendingBoostedItems = []; // Combined trending (jobs, swaps, etc.)
 
-// ✅ Load BOM Jobs with Boost Logic (No Trending Integration)
+// ✅ Load BOM Jobs with Boost Logic
 async function loadBOMJobs() {
   const container = document.getElementById("jobContainer");
   container.innerHTML = "";
 
   // Show the loading spinner
   const spinner = document.getElementById("loadingSpinner");
-  if (spinner) spinner.style.display = "flex"; // Show spinner during loading
+  if (spinner) spinner.style.display = "flex";
 
   try {
     const snapshot = await bomRef.orderBy("timestamp", "desc").get();
@@ -5528,12 +5546,11 @@ async function loadBOMJobs() {
     }
 
     console.log("✅ Loaded BOM Jobs:", bomJobsCache);
-    renderBOMJobs(bomJobsCache); // ✅ Render only BOM Jobs (without trending section)
+    renderBOMJobs(bomJobsCache);
 
   } catch (err) {
     showCustomAlert("❌ Failed to load jobs: " + err.message, "error");
   } finally {
-    // Hide the spinner after loading is done
     if (spinner) spinner.style.display = "none";
   }
 }
@@ -5549,332 +5566,292 @@ function renderBOMJobs(jobs) {
 
   const hasAccess = hasBomJobAccess();
 
-  // ✅ Sort: Boosted first, then by timestamp
+  // Sort: Boosted first, then by timestamp
   jobs.sort((a, b) => {
     const now = new Date();
     const aBoosted = a.isBoosted && a.boostExpiry?.toDate?.() > now;
     const bBoosted = b.isBoosted && b.boostExpiry?.toDate?.() > now;
-
-    if (aBoosted && bBoosted) {
-      return (b.boostExpiry?.toDate?.() || 0) - (a.boostExpiry?.toDate?.() || 0);
-    }
+    if (aBoosted && bBoosted) return (b.boostExpiry?.toDate?.() || 0) - (a.boostExpiry?.toDate?.() || 0);
     if (aBoosted && !bBoosted) return -1;
     if (!aBoosted && bBoosted) return 1;
-
     return (b.timestamp?.toDate?.() || 0) - (a.timestamp?.toDate?.() || 0);
   });
 
   jobs.forEach(job => {
     const card = document.createElement("div");
     card.className = "job-card";
-    card.style.cssText = `
-      position: relative;
-      border: 1px solid #ddd;
-      border-radius: 12px;
-      overflow: hidden;
-      margin-bottom: 18px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-      background: #fff;
-      text-align: center;
-    `;
+    card.style.cssText = `position: relative; border: 1px solid #ddd; border-radius: 12px; overflow: hidden; margin-bottom: 18px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); background: #fff; text-align: center;`;
 
-    const isPoster = currentUser && (job.postedBy === currentUser.email || job.postedBy === currentUser.displayName);
+    const isPoster = currentUser && (job.postedBy === currentUser.uid);
     const isVerified = !!job.verified;
+    const badge = isVerified ? `<div class="verified-badge"><i class="fas fa-check-circle"></i> Verified</div>` : "";
+    const verifyButton = (!isVerified && isAdmin) ? `<button onclick="adminVerifyItem('job','${job.id}')" style="background:#4CAF50; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer;">✅ Verify Now (Admin)</button>` : "";
 
-    const badge = isVerified
-      ? `<div class="verified-badge"><i class="fas fa-check-circle"></i> Verified</div>` 
-      : "";
-
-    // ✅ Show "Verify Now" button for Admin if not verified
-    const verifyButton = (!isVerified && isAdmin)
-      ? `<button onclick="adminVerifyItem('job', '${job.id}')"
-          style="background:#4CAF50; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer; margin-top:6px;">
-          ✅ Verify Now (Admin)
-        </button>` 
-      : "";
-
+    // Icons
     const salaryIcon = '<i class="fas fa-dollar-sign" style="margin-right: 8px;"></i>';
     const locationIcon = '<i class="fas fa-map-marker-alt" style="margin-right: 8px;"></i>';
-    const phoneIcon = '<i class="fas fa-phone-alt" style="margin-right: 8px;"></i>';
     const dateIcon = '<i class="fas fa-calendar-day" style="margin-right: 8px;"></i>';
 
+    // Boost badge & tag
     let boostBadge = "";
     let topCornerTag = "";
-
     if (job.isBoosted && job.boostExpiry) {
       const daysLeft = Math.ceil((job.boostExpiry - new Date()) / (1000 * 60 * 60 * 24));
-      boostBadge = `
-        <span style="background: orange; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 6px;">
-          🔥 Trending Now
-        </span>
-        <span style="color: gray; font-size: 0.75em;">(${daysLeft} day${daysLeft !== 1 ? "s" : ""} left)</span>
-      `;
-      topCornerTag = `
-        <div style="
-          position: absolute;
-          top: 8px;
-          right: 8px;
-          background: #f44336;
-          color: white;
-          font-size: 0.75em;
-          padding: 4px 8px;
-          border-radius: 6px;
-          font-weight: bold;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        ">
-          🔥 TRENDING
-        </div>
-      `;
+      boostBadge = `<span style="background: orange; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 6px;">🔥 Trending Now</span>
+                    <span style="color: gray; font-size: 0.75em;">(${daysLeft} day${daysLeft!==1?"s":""} left)</span>`;
+      topCornerTag = `<div style="position:absolute; top:8px; right:8px; background:#f44336; color:white; font-size:0.75em; padding:4px 8px; border-radius:6px; font-weight:bold; box-shadow:0 2px 4px rgba(0,0,0,0.2);">🔥 TRENDING</div>`;
     }
 
+    // Job type icon & color
     const jobType = job.jobType?.toLowerCase() || "";
-    let iconClass = "fa-user-tie";
-    let bgColor = "#607d8b";
+    let iconClass = "fa-user-tie", bgColor="#607d8b";
+    if (jobType.includes("teacher")) iconClass="fa-chalkboard-teacher", bgColor="#42a5f5";
+    else if (jobType.includes("developer")) iconClass="fa-laptop-code", bgColor="#42a5f5";
+    else if (jobType.includes("designer")) iconClass="fa-paint-brush", bgColor="#9c27b0";
+    else if (jobType.includes("volunteer")) iconClass="fa-hands-helping", bgColor="#43a047";
+    else if (jobType.includes("chef")) iconClass="fa-utensils", bgColor="#8d6e63";
+    const iconHTML = `<div style="padding:18px; background:${bgColor}; display:inline-flex; justify-content:center; align-items:center; border-radius:8px;"><i class="fas ${iconClass}" style="font-size:50px; color:#fff;"></i></div>`;
 
-    if (jobType.includes("teacher")) iconClass = "fa-chalkboard-teacher", bgColor = "#42a5f5";
-    else if (jobType.includes("developer")) iconClass = "fa-laptop-code", bgColor = "#42a5f5";
-    else if (jobType.includes("designer")) iconClass = "fa-paint-brush", bgColor = "#9c27b0";
-if (jobType.includes("teacher")) iconClass = "fa-chalkboard-teacher", bgColor = "#42a5f5";
-else if (jobType.includes("developer")) iconClass = "fa-laptop-code", bgColor = "#42a5f5";
-else if (jobType.includes("designer")) iconClass = "fa-paint-brush", bgColor = "#9c27b0";
-else if (jobType.includes("chef")) iconClass = "fa-utensils", bgColor = "#8d6e63";
+// Contact section (phone/link with paywall)
+let contactSection = "";
 
-else if (jobType.includes("nurse")) iconClass = "fa-user-nurse", bgColor = "#e91e63";
-else if (jobType.includes("doctor")) iconClass = "fa-user-md", bgColor = "#f44336";
-else if (jobType.includes("driver")) iconClass = "fa-truck", bgColor = "#3f51b5";
-else if (jobType.includes("pilot")) iconClass = "fa-plane", bgColor = "#2196f3";
-else if (jobType.includes("mechanic")) iconClass = "fa-tools", bgColor = "#795548";
-else if (jobType.includes("plumber")) iconClass = "fa-wrench", bgColor = "#607d8b";
-else if (jobType.includes("electrician")) iconClass = "fa-bolt", bgColor = "#ff9800";
-else if (jobType.includes("farmer")) iconClass = "fa-tractor", bgColor = "#4caf50";
-else if (jobType.includes("engineer")) iconClass = "fa-cogs", bgColor = "#607d8b";
-else if (jobType.includes("architect")) iconClass = "fa-drafting-compass", bgColor = "#9e9d24";
-else if (jobType.includes("lawyer")) iconClass = "fa-balance-scale", bgColor = "#673ab7";
-else if (jobType.includes("judge")) iconClass = "fa-gavel", bgColor = "#3e2723";
-else if (jobType.includes("police")) iconClass = "fa-shield-alt", bgColor = "#1a237e";
-else if (jobType.includes("security")) iconClass = "fa-user-shield", bgColor = "#000000";
-else if (jobType.includes("firefighter")) iconClass = "fa-fire-extinguisher", bgColor = "#d32f2f";
-else if (jobType.includes("scientist")) iconClass = "fa-flask", bgColor = "#00bcd4";
-else if (jobType.includes("pharmacist")) iconClass = "fa-pills", bgColor = "#8e24aa";
-else if (jobType.includes("dentist")) iconClass = "fa-tooth", bgColor = "#fbc02d";
-else if (jobType.includes("veterinarian")) iconClass = "fa-paw", bgColor = "#8d6e63";
-else if (jobType.includes("waiter")) iconClass = "fa-concierge-bell", bgColor = "#ff9800";
-else if (jobType.includes("receptionist")) iconClass = "fa-phone", bgColor = "#4caf50";
-else if (jobType.includes("sales")) iconClass = "fa-cash-register", bgColor = "#009688";
-else if (jobType.includes("accountant")) iconClass = "fa-calculator", bgColor = "#3f51b5";
-else if (jobType.includes("banker")) iconClass = "fa-university", bgColor = "#0d47a1";
-else if (jobType.includes("marketer")) iconClass = "fa-bullhorn", bgColor = "#ff5722";
-else if (jobType.includes("photographer")) iconClass = "fa-camera", bgColor = "#6a1b9a";
-else if (jobType.includes("videographer")) iconClass = "fa-video", bgColor = "#c2185b";
-else if (jobType.includes("model")) iconClass = "fa-user", bgColor = "#f48fb1";
-else if (jobType.includes("actor")) iconClass = "fa-theater-masks", bgColor = "#ff9800";
-else if (jobType.includes("musician")) iconClass = "fa-music", bgColor = "#5e35b1";
-else if (jobType.includes("dj")) iconClass = "fa-headphones", bgColor = "#512da8";
-else if (jobType.includes("tailor")) iconClass = "fa-cut", bgColor = "#ff7043";
-else if (jobType.includes("cleaner")) iconClass = "fa-broom", bgColor = "#66bb6a";
-else if (jobType.includes("translator")) iconClass = "fa-language", bgColor = "#0097a7";
-else if (jobType.includes("tour guide")) iconClass = "fa-map-marked-alt", bgColor = "#43a047";
-else if (jobType.includes("chef assistant")) iconClass = "fa-hamburger", bgColor = "#ff9800";
-else if (jobType.includes("barista")) iconClass = "fa-coffee", bgColor = "#6d4c41";
-else if (jobType.includes("butcher")) iconClass = "fa-drumstick-bite", bgColor = "#d84315";
-else if (jobType.includes("baker")) iconClass = "fa-bread-slice", bgColor = "#f57c00";
-else if (jobType.includes("fisherman")) iconClass = "fa-fish", bgColor = "#0288d1";
-else if (jobType.includes("construction worker")) iconClass = "fa-hard-hat", bgColor = "#ffa000";
-else if (jobType.includes("miner")) iconClass = "fa-gem", bgColor = "#616161";
-else if (jobType.includes("scientist assistant")) iconClass = "fa-vials", bgColor = "#00897b";
-else if (jobType.includes("social worker")) iconClass = "fa-hands-helping", bgColor = "#ff7043";
-else if (jobType.includes("delivery")) iconClass = "fa-shipping-fast", bgColor = "#ef6c00";
-else if (jobType.includes("call center")) iconClass = "fa-headset", bgColor = "#3949ab";
-else if (jobType.includes("it support")) iconClass = "fa-server", bgColor = "#1e88e5";
-else if (jobType.includes("hr manager")) iconClass = "fa-user-tie", bgColor = "#6d4c41";
-else if (jobType.includes("seo specialist")) iconClass = "fa-search", bgColor = "#00acc1";
-else if (jobType.includes("content writer")) iconClass = "fa-pen-nib", bgColor = "#ab47bc";
-else if (jobType.includes("blogger")) iconClass = "fa-blog", bgColor = "#7b1fa2";
-else if (jobType.includes("youtuber")) iconClass = "fa-video", bgColor = "#e53935";
-else if (jobType.includes("data analyst")) iconClass = "fa-chart-line", bgColor = "#2e7d32";
-else if (jobType.includes("data scientist")) iconClass = "fa-database", bgColor = "#1565c0";
-else if (jobType.includes("ai engineer")) iconClass = "fa-robot", bgColor = "#00bcd4";
-else if (jobType.includes("cyber security")) iconClass = "fa-user-secret", bgColor = "#263238";
-else if (jobType.includes("blockchain")) iconClass = "fa-link", bgColor = "#ff6f00";
-else if (jobType.includes("crypto trader")) iconClass = "fa-coins", bgColor = "#ffb300";
-else if (jobType.includes("real estate")) iconClass = "fa-building", bgColor = "#8d6e63";
-else if (jobType.includes("insurance agent")) iconClass = "fa-file-contract", bgColor = "#455a64";
-else if (jobType.includes("loan officer")) iconClass = "fa-hand-holding-usd", bgColor = "#558b2f";
-else if (jobType.includes("event planner")) iconClass = "fa-calendar-check", bgColor = "#9c27b0";
-else if (jobType.includes("wedding planner")) iconClass = "fa-ring", bgColor = "#ff4081";
-else if (jobType.includes("makeup artist")) iconClass = "fa-magic", bgColor = "#ec407a";
-else if (jobType.includes("hair stylist")) iconClass = "fa-cut", bgColor = "#f06292";
-else if (jobType.includes("barber")) iconClass = "fa-user", bgColor = "#8d6e63";
-else if (jobType.includes("painter")) iconClass = "fa-paint-roller", bgColor = "#5d4037";
-else if (jobType.includes("sculptor")) iconClass = "fa-sculpture", bgColor = "#6d4c41"; // Custom icon from FA Pro if available
-else if (jobType.includes("carpenter")) iconClass = "fa-hammer", bgColor = "#795548";
-else if (jobType.includes("tile setter")) iconClass = "fa-border-style", bgColor = "#9e9e9e";
-else if (jobType.includes("welder")) iconClass = "fa-tools", bgColor = "#ff7043";
-else if (jobType.includes("glass installer")) iconClass = "fa-glass-whiskey", bgColor = "#90a4ae";
-else if (jobType.includes("roofer")) iconClass = "fa-home", bgColor = "#ff7043";
-else if (jobType.includes("interior designer")) iconClass = "fa-couch", bgColor = "#6a1b9a";
-else if (jobType.includes("landscaper")) iconClass = "fa-tree", bgColor = "#4caf50";
-else if (jobType.includes("logger")) iconClass = "fa-tree", bgColor = "#2e7d32";
-else if (jobType.includes("truck driver")) iconClass = "fa-truck-moving", bgColor = "#4e342e";
-else if (jobType.includes("taxi driver")) iconClass = "fa-taxi", bgColor = "#fbc02d";
-else if (jobType.includes("bus driver")) iconClass = "fa-bus", bgColor = "#f57c00";
-else if (jobType.includes("train conductor")) iconClass = "fa-train", bgColor = "#3f51b5";
-else if (jobType.includes("ship captain")) iconClass = "fa-anchor", bgColor = "#0d47a1";
-else if (jobType.includes("flight attendant")) iconClass = "fa-plane-departure", bgColor = "#03a9f4";
-else if (jobType.includes("airport staff")) iconClass = "fa-plane-arrival", bgColor = "#0288d1";
-else if (jobType.includes("warehouse worker")) iconClass = "fa-boxes", bgColor = "#8d6e63";
-else if (jobType.includes("packer")) iconClass = "fa-box", bgColor = "#a1887f";
-else if (jobType.includes("logistics")) iconClass = "fa-shipping-fast", bgColor = "#009688";
-else if (jobType.includes("supply chain")) iconClass = "fa-truck-loading", bgColor = "#ff9800";
-else if (jobType.includes("quality inspector")) iconClass = "fa-clipboard-check", bgColor = "#388e3c";
-else if (jobType.includes("project manager")) iconClass = "fa-tasks", bgColor = "#607d8b";
-else if (jobType.includes("supervisor")) iconClass = "fa-user-tie", bgColor = "#455a64";
-else if (jobType.includes("foreman")) iconClass = "fa-hard-hat", bgColor = "#ffa000";
-else if (jobType.includes("researcher")) iconClass = "fa-microscope", bgColor = "#1e88e5";
-else if (jobType.includes("teacher assistant")) iconClass = "fa-chalkboard", bgColor = "#64b5f6";
-else if (jobType.includes("lecturer")) iconClass = "fa-user-graduate", bgColor = "#3949ab";
-else if (jobType.includes("professor")) iconClass = "fa-graduation-cap", bgColor = "#283593";
-else if (jobType.includes("coach")) iconClass = "fa-dumbbell", bgColor = "#f44336";
-else if (jobType.includes("personal trainer")) iconClass = "fa-running", bgColor = "#ff7043";
-else if (jobType.includes("lifeguard")) iconClass = "fa-life-ring", bgColor = "#0288d1";
-else if (jobType.includes("swimming instructor")) iconClass = "fa-swimmer", bgColor = "#039be5";
-else if (jobType.includes("pilot trainee")) iconClass = "fa-plane", bgColor = "#03a9f4";
-else if (jobType.includes("intern")) iconClass = "fa-user-graduate", bgColor = "#8e24aa";
-else if (jobType.includes("volunteer")) iconClass = "fa-hands-helping", bgColor = "#43a047";
+if (isPoster || isAdmin || hasAccess) {
+  // Admins and poster see contacts directly
+  contactSection = `
+    ${job.phone ? `
+      <p style="color:#009688; margin-bottom:8px;">
+        <strong>Phone:</strong><br>
+        <a href="tel:${job.phone}" style="color:white; background:#4caf50; padding:8px 12px; border-radius:6px; text-decoration:none;">
+          📞 Call
+        </a>
+      </p>
+    ` : ""}
 
-    else if (jobType.includes("chef")) iconClass = "fa-utensils", bgColor = "#8d6e63";
-
-    // Define iconHTML before using it
-    const iconHTML = `
-      <div style="padding: 18px; background: ${bgColor}; display: inline-flex; justify-content: center; align-items: center; border-radius: 8px;">
-        <i class="fas ${iconClass}" style="font-size: 50px; color: #fff;"></i>
+    ${job.contact ? `
+      <p style="color:#009688; margin-bottom:8px;">
+        <strong>Apply Here:</strong><br>
+        <a href="${job.contact}" target="_blank" style="color:white; background:#2196f3; padding:8px 12px; border-radius:6px; text-decoration:none;">
+          🔗 Application Link
+        </a>
+      </p>
+    ` : ""}
+  `;
+} else {
+  // Regular users: show paywall
+  contactSection = `
+    ${job.phone ? `
+      <div class="blurred">
+        <p style="color:gray;">🔒 Phone contacts – Pay Ksh 350 to unlock</p>
       </div>
-    `;
+      <button onclick="unlockBomJobs('${job.id}', 350)" 
+        style="color:white; background:#4caf50; padding:8px 12px; border-radius:6px; border:none; cursor:pointer;">
+        💳 Unlock Phone (Ksh 350)
+      </button>
+    ` : ""}
 
-    const contactSection = (isPoster || hasAccess || isAdmin)
-      ? ` 
-        <p style="color:#009688; margin-bottom: 8px;">
-          <strong>Phone:</strong><br>
-          <div style="border: 2px solid #4caf50; background-color: #4caf50; padding: 8px; border-radius: 8px; display: inline-flex; align-items: center; margin-right: 8px; max-width: fit-content;">
-            <a href="tel:${job.phone}" style="color:white; font-size: 16px; text-decoration: none;">📞 Call</a>
-            <i class="fas fa-phone-alt" style="margin-left: 8px; color:white;"></i>
-          </div>
-        </p>
-        <p style="color:#009688; margin-bottom: 8px;">
-          <strong>WhatsApp:</strong><br>
-          <div style="border: 2px solid #25D366; background-color: #25D366; padding: 8px; border-radius: 8px; display: inline-flex; align-items: center; max-width: fit-content;">
-            <a href="https://wa.me/254${job.phone.replace(/^0/, '')}" target="_blank" style="color:white; font-size: 16px; text-decoration: none;">WhatsApp</a>
-            <i class="fab fa-whatsapp" style="margin-left: 8px; color:white;"></i>
-          </div>
-        </p>`
-      : ` 
-        <div class="blurred">
-          <p style="color:gray;">🔒 Contacts Locked – Pay Ksh 350 to Unlock Contact</p>
-        </div>
-        <button onclick="unlockBomJobs()"
-          style="background:crimson; color:white; padding:6px 12px; border:none; border-radius:6px;">
-          💳 Pay Ksh 350
-        </button>
-      `;
+    ${job.contact ? `
+      <div class="blurred">
+        <p style="color:gray;">🔒 Application link – Pay Ksh 50 to unlock</p>
+      </div>
+      <button onclick="unlockBomJobs('${job.id}', 50)" 
+        style="color:white; background:#2196f3; padding:8px 12px; border-radius:6px; border:none; cursor:pointer;">
+        💳 Unlock Link (Ksh 50)
+      </button>
+    ` : ""}
+  `;
+}
 
+
+    // Action buttons
     const actionButtons = `
       <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;" id="actionButtons-${job.id}">
-        ${(isPoster || isAdmin) ? ` 
-          <button onclick="confirmDeleteBOMJob('${job.id}')"
-            style="background:#dc3545; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer;">
-            🗑️ Delete
-          </button>` : ''} 
-
-        ${isAdmin ? ` 
-          <button onclick="boostJobFree('${job.id}')"
-            style="background:#4caf50; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer;">
-            🚀 Boost (Free)
-          </button>` : ''}
-
-        ${verifyButton}
-
-        ${(isPoster || isAdmin) ? `
-        <button onclick="closeJob('${job.id}')"
-          style="background:#6c757d; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer;">
-          ${job.isClosed ? '♻️ Reopen Job' : '🚫 Mark as Closed'}
-        </button>` : ''}
-
-        <button onclick="showInterest('${job.id}')"
-          style="background:#ff9800; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer;">
-          💼 Show Interest
-        </button>
-
-        <button onclick="followJob('${job.id}')"
-          style="background:#2196f3; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer;">
-          👀 Follow Job
-        </button>
+        ${(isPoster || isAdmin)? `<button onclick="confirmDeleteBOMJob('${job.id}')" style="background:#dc3545;color:white;border:none;border-radius:5px;padding:6px 12px;cursor:pointer;">🗑️ Delete</button>` : ''}
+        ${(isPoster || isAdmin)? `<button onclick="boostJob('${job.id}')" style="background:#4caf50;color:white;border:none;border-radius:5px;padding:6px 12px;cursor:pointer;">🚀 Boost${isPoster?' (Ksh 350)':''}</button>` : ''}
+        ${(isPoster && !isVerified)? `<button onclick="verifyJob('${job.id}')" style="background:#ff9800;color:white;border:none;border-radius:5px;padding:6px 12px;cursor:pointer;">✅ Get Verified (Ksh 250)</button>` : ''}
+        ${isAdmin && !isVerified ? verifyButton : ''}
+        ${(isPoster || isAdmin)? `<button onclick="closeJob('${job.id}')" style="background:#6c757d;color:white;border:none;border-radius:5px;padding:6px 12px;cursor:pointer;">${job.isClosed?'♻️ Reopen Job':'🚫 Mark as Closed'}</button>` : ''}
+        <button onclick="showInterest('${job.id}')" style="background:#ff9800;color:white;border:none;border-radius:5px;padding:6px 12px;cursor:pointer;">💼 Show Interest</button>
+        <button onclick="followJob('${job.id}')" style="background:#2196f3;color:white;border:none;border-radius:5px;padding:6px 12px;cursor:pointer;">👀 Follow Job</button>
       </div>
-
-      <p id="interest-count-${job.id}" style="font-size:0.8em; color: #8e24aa; margin-top:6px;">
-        ${job.interestCount || 0} people interested
-      </p>
-
-      <p id="followed-count-${job.id}" style="font-size:0.8em; color: #2196f3; margin-top:4px;">
-        0 people following
-      </p>
+      <p id="interest-count-${job.id}" style="font-size:0.8em;color:#8e24aa;margin-top:6px;">${job.interestCount||0} people interested</p>
+      <p id="followed-count-${job.id}" style="font-size:0.8em;color:#2196f3;margin-top:4px;">0 people following</p>
     `;
 
-    const moreButton = `
-      <button onclick="toggleMoreActions('${job.id}')"
-        style="background:#00bcd4; color:white; border:none; border-radius:5px; padding:6px 12px; cursor:pointer;">
-        More...
-      </button>
-    `;
-
-    function toggleMoreActions(jobId) {
+    const moreButton = `<button onclick="toggleMoreActions('${job.id}')" style="background:#00bcd4;color:white;border:none;border-radius:5px;padding:6px 12px;cursor:pointer;">More...</button>`;
+    
+    window.toggleMoreActions = function(jobId){
       const actionContainer = document.getElementById(`actionButtons-${jobId}`);
       const button = actionContainer.previousElementSibling;
-
       if (actionContainer.style.display === 'none' || actionContainer.style.display === '') {
-        actionContainer.style.display = 'flex';  
-        button.innerHTML = 'Less...';  
+        actionContainer.style.display='flex'; button.innerHTML='Less...';
       } else {
-        actionContainer.style.display = 'none';  
-        button.innerHTML = 'More...';  
+        actionContainer.style.display='none'; button.innerHTML='More...';
       }
     }
 
-    // Final Card HTML with 'More' Button
+    // Final Card HTML
     card.innerHTML = `
       ${topCornerTag}
       ${iconHTML}
-      <div style="padding: 14px; text-align:left;">
+      <div style="padding:14px; text-align:left;">
         ${badge}
-        <h3 style="color:#2e7d32;">${job.jobType} ${boostBadge} ${job.isClosed ? '<span style="color:red;">(Closed)</span>' : ''}</h3>
-
+        <h3 style="color:#2e7d32;">${job.jobType} ${boostBadge} ${job.isClosed?'<span style="color:red;">(Closed)</span>':''}</h3>
         <p style="color:#3f51b5;"><strong>Organization:</strong> ${job.organization}</p>
         ${contactSection}
         <p style="color:#e91e63;"><strong>${locationIcon}Location:</strong> ${job.county}, ${job.subCounty}</p>
         <p style="color:#ff9800;"><strong>${salaryIcon}Salary Range:</strong> KES ${parseInt(job.salaryRange).toLocaleString()}</p>
         <p style="color:#6a1b9a;"><strong>${dateIcon}Date Posted:</strong> ${job.datePosted}</p>
         <p style="color:#795548;"><strong>Posted By:</strong> ${job.postedBy || "Unknown"}</p>
-
-        <div style="margin-top: 10px;">
-          ${moreButton}
-          <div id="actionButtons-${job.id}" style="display:none;">${actionButtons}</div>
-        </div>
-
-        <div class="rating" data-id="${job.id}" style="margin-top: 10px;">
-          <span class="avg-rating" id="avgRating-${job.id}">Loading...</span><br>
-          ${[1, 2, 3, 4, 5].map(star => `
-            <i class="fas fa-star" onclick="rateService('${job.id}', ${star})"
-              style="cursor:pointer; color:#ccc;" id="star-${job.id}-${star}"></i>
-          `).join('')}
-        </div>
+        <div style="margin-top:10px;">${moreButton}<div id="actionButtons-${job.id}" style="display:none;">${actionButtons}</div></div>
       </div>
     `;
-
-    // Append card to container
     container.appendChild(card);
     updateFollowedCount(job.id);
     updateInterestCount(job.id);
   });
 }
+
+
+// ✅ Boost Job
+async function boostJob(jobId) { 
+  const spinner = document.getElementById("loadingSpinner");
+  if (spinner) spinner.style.display = "flex"; // Show spinner
+
+  try {
+    const jobRef = db.collection("bomJobs").doc(jobId);
+    const doc = await jobRef.get();
+    if (!doc.exists) {
+      showCustomAlert("❌ Job not found.", "error");
+      return;
+    }
+
+    const data = doc.data();
+    const postedBy = data.postedBy; // UID of poster
+
+    const currentUser = firebase.auth().currentUser;
+    if (!currentUser) {
+      showCustomAlert("❌ You need to be logged in to boost a job.", "error");
+      return;
+    }
+
+    // Poster: trigger payment first
+    if (currentUser.uid === postedBy) {
+      showPaymentModalFor('boost', 350, jobId, data.jobType, async () => {
+        await applyBoost(jobRef, data);
+      });
+      return; // Stop here until payment completes
+    }
+
+    // Admin or others: boost directly
+    await applyBoost(jobRef, data);
+
+  } catch (err) {
+    console.error("❌ Boost error:", err);
+    showCustomAlert("❌ Failed to boost: " + err.message, "error");
+  } finally {
+    if (spinner) spinner.style.display = "none";
+  }
+}
+
+// ✅ Helper function to apply boost
+async function applyBoost(jobRef, data) {
+  const boostExpiry = new Date();
+  boostExpiry.setDate(boostExpiry.getDate() + 7);
+
+  await jobRef.update({
+    isBoosted: true,
+    boostExpiry: firebase.firestore.Timestamp.fromDate(boostExpiry),
+    timestamp: new Date() // Push to top
+  });
+
+  showCustomAlert("✅ Job boosted successfully.", "success");
+  loadBOMJobs(); // Refresh list
+
+  // Admin notification
+  await db.collection("adminNotifications").add({
+    type: "Job Boosted",
+    jobId: jobRef.id,
+    jobType: data.jobType,
+    boostedBy: firebase.auth().currentUser.displayName || firebase.auth().currentUser.email,
+    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    message: `🚀 Job "${data.jobType}" boosted by ${firebase.auth().currentUser.displayName || firebase.auth().currentUser.email}`
+  });
+}
+
+// ✅ Verify Job
+async function verifyJob(jobId) {
+  const spinner = document.getElementById("loadingSpinner");
+  if (spinner) spinner.style.display = "flex";
+
+  try {
+    const jobRef = db.collection("bomJobs").doc(jobId);
+    const doc = await jobRef.get();
+    if (!doc.exists) {
+      showCustomAlert("❌ Job not found.", "error");
+      return;
+    }
+
+    const data = doc.data();
+    const currentUser = firebase.auth().currentUser;
+    if (!currentUser) {
+      showCustomAlert("❌ You need to login first.", "error");
+      return;
+    }
+
+    // Poster: pay Ksh 250
+    if (currentUser.uid === data.postedBy) {
+      showPaymentModalFor('verify', 250, jobId, data.jobType, async () => {
+        await applyVerification(jobRef);
+      });
+      return;
+    }
+
+    // Admin: verify immediately
+    await applyVerification(jobRef);
+
+  } catch (err) {
+    console.error("❌ Verify error:", err);
+    showCustomAlert("❌ Failed to verify: " + err.message, "error");
+  } finally {
+    if (spinner) spinner.style.display = "none";
+  }
+}
+
+// ✅ Helper to apply verification
+async function applyVerification(jobRef) {
+  await jobRef.update({ verified: true });
+  showCustomAlert("✅ Job verified successfully.", "success");
+  loadBOMJobs(); // refresh the list
+}
+
+// ✅ Payment Modal (dynamic for Boost or Verify)
+function showPaymentModalFor(type, amount, jobId, jobType, onSuccess) {
+  const modal = document.getElementById("paymentModal");
+  const modalTitle = modal.querySelector(".modal-title");
+  const modalBody = modal.querySelector(".modal-body");
+  const payButton = modal.querySelector(".pay-button");
+
+  if (type === 'boost') {
+    modalTitle.textContent = "💳 Pay for Boost";
+    modalBody.textContent = `Pay Ksh ${amount} to boost your job "${jobType}".`;
+  } else if (type === 'verify') {
+    modalTitle.textContent = "💳 Pay for Verification";
+    modalBody.textContent = `Pay Ksh ${amount} to get your job "${jobType}" verified.`;
+  }
+
+  modal.style.display = "block";
+
+  payButton.onclick = async () => {
+    // Trigger payment logic (STK push or manual)
+    // After successful payment:
+    if (typeof onSuccess === 'function') {
+      await onSuccess();
+    }
+    modal.style.display = "none";
+  };
+}
+
+
 
 // ✅ Update Average Rating
 async function updateAverageRating(jobId) {
@@ -6161,46 +6138,62 @@ function updateInterestCount(jobId) {
 function onPageLoad(jobId) {
   updateInterestCount(jobId);
 }
-
+// ✅ Close or Reopen BOM Job
 async function closeJob(jobId) {
-  try {
-    // Show the loading spinner while the operation is being processed
-    document.getElementById("loadingSpinner").style.display = "flex";
+  const spinner = document.getElementById("loadingSpinner");
+  if (spinner) spinner.style.display = "flex"; // Show spinner
 
+  try {
     const jobRef = db.collection("bomJobs").doc(jobId);
     const jobSnap = await jobRef.get();
 
     if (!jobSnap.exists) {
       showCustomAlert("❌ Job not found.", "error");
-      document.getElementById("loadingSpinner").style.display = "none"; // Hide spinner
       return;
     }
 
-    const currentStatus = jobSnap.data().isClosed || false;
+    const jobData = jobSnap.data();
+    const currentUser = firebase.auth().currentUser;
+
+    if (!currentUser) {
+      showCustomAlert("❌ You need to login first.", "error");
+      return;
+    }
+
+    // Check if user is admin or the poster
+    const isAdmin = ["mashabiki@teacherswapskenya.com", "sironga1@teacherswapskenya.com", "admin1@teacherswapskenya.com"].includes(currentUser.email);
+    const isPoster = currentUser.uid === jobData.postedBy;
+
+    if (!isAdmin && !isPoster) {
+      showCustomAlert("❌ You do not have permission to change job status.", "error");
+      return;
+    }
+
+    const currentStatus = jobData.isClosed || false;
     const newStatus = !currentStatus;
 
-    await jobRef.update({
-      isClosed: newStatus
-    });
+    await jobRef.update({ isClosed: newStatus });
 
     if (newStatus) {
       showCustomAlert("✅ Job marked as closed.", "success");
 
-      // Send admin notification about the job closure
+      // Admin notification for closure
       await db.collection("adminNotifications").add({
         type: "Job Closed",
         jobId: jobId,
-        message: `🔒 A BOM Job with ID ${jobId} has been marked as closed.`,
+        jobType: jobData.jobType || "",
+        message: `🔒 BOM Job "${jobData.jobType || 'Unknown'}" (ID: ${jobId}) has been marked as closed by ${currentUser.displayName || currentUser.email}.`,
         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       });
     } else {
       showCustomAlert("♻️ Job reopened successfully.", "success");
 
-      // Send admin notification about the job reopening
+      // Admin notification for reopening
       await db.collection("adminNotifications").add({
         type: "Job Reopened",
         jobId: jobId,
-        message: `✅ A BOM Job with ID ${jobId} has been reopened.`,
+        jobType: jobData.jobType || "",
+        message: `✅ BOM Job "${jobData.jobType || 'Unknown'}" (ID: ${jobId}) has been reopened by ${currentUser.displayName || currentUser.email}.`,
         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       });
     }
@@ -6211,50 +6204,11 @@ async function closeJob(jobId) {
     console.error("❌ Error updating job status:", error);
     showCustomAlert("❌ Failed to update job status: " + error.message, "error");
   } finally {
-    // Hide the spinner once the operation is complete
-    document.getElementById("loadingSpinner").style.display = "none";
+    if (spinner) spinner.style.display = "none"; // Hide spinner
   }
 }
 
 
-
-async function boostJobFree(jobId) {
-  const boostExpiry = new Date();
-  boostExpiry.setDate(boostExpiry.getDate() + 7); // 7-day boost
-
-  try {
-    // Show the loading spinner while the operation is being processed
-    document.getElementById("loadingSpinner").style.display = "flex";
-
-    // Update the job status with boosted details
-    await db.collection("bomJobs").doc(jobId).update({
-      isBoosted: true,
-      boostExpiry: boostExpiry,
-      timestamp: new Date()  // ✅ Important: force it to go top
-    });
-
-    showCustomAlert("✅ Job boosted for FREE by Admin", "success");
-    loadBOMJobs(); // Refresh the list
-
-    // Send admin notification about the free boost
-    const notifRef = db.collection("adminNotifications").doc();
-    await notifRef.set({
-      type: "Job Boosted Free",
-      jobId: jobId,
-      message: `💥 A BOM Job with ID ${jobId} has been boosted for FREE by Admin.`,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-
-    console.log("Admin notification sent for job boost.");
-
-  } catch (error) {
-    console.error("❌ Error boosting job:", error);
-    showCustomAlert("❌ Failed to boost job: " + error.message, "error");
-  } finally {
-    // Hide the spinner once the operation is complete
-    document.getElementById("loadingSpinner").style.display = "none";
-  }
-}
 
 
 
@@ -6269,39 +6223,51 @@ function hasBomJobAccess() {
   return diffDays <= 14; // valid for 2 weeks
 }
 
-// Function to unlock BOM Job contacts and send admin notification
-async function unlockBomJobs() {
+// Function to unlock BOM Job contacts or links and send admin notification
+async function unlockBomJobs(jobId, amount) {
   if (!currentUser || !currentUser.uid) {
     showCustomAlert("Please login to unlock job contacts.", "error");
     return;
   }
 
-  showPaymentModalFor("bomjobs", 350, currentUser.uid, "Job Contacts");
+  // Admin bypass: unlock immediately without payment
+  if (isAdmin) {
+    showCustomAlert(amount === 50 ? "Job application link unlocked (Admin)!" : "Job contacts unlocked (Admin)!", "success");
+    loadBOMJobs(); // re-render job cards
+    return;
+  }
+
+  // Show payment modal with dynamic amount
+  showPaymentModalFor("bomjobs", amount, currentUser.uid, amount === 50 ? "Job Application Link" : "Job Contacts");
 
   const checkPaid = setInterval(async () => {
-    if (localStorage.getItem("paidForBomJobs") === "yes") {
+    const paidKey = amount === 50 ? `paidForBomJobLink-${jobId}` : `paidForBomJobs`;
+    if (localStorage.getItem(paidKey) === "yes") {
       clearInterval(checkPaid);
-      showCustomAlert("Job contacts unlocked ", "success");
+      showCustomAlert(amount === 50 ? "Job application link unlocked!" : "Job contacts unlocked!", "success");
       closeUniversalModal();
-      loadBOMJobs(); // re-render if function exists
+      loadBOMJobs(); // re-render job cards
 
-      // Send admin notification for unlocked BOM job contacts
+      // Send admin notification for unlocked BOM job contacts or link
       try {
         const notifRef = db.collection("adminNotifications").doc();
         await notifRef.set({
-          type: "BOM Job Contact Unlock",
+          type: amount === 50 ? "BOM Job Link Unlock" : "BOM Job Contact Unlock",
           userId: currentUser.uid,
-          message: `🔓 ${currentUser.email} has unlocked BOM Job contacts for 2 weeks.`,
+          message: amount === 50
+            ? `🔓 ${currentUser.email} has unlocked a BOM Job application link for 2 weeks.`
+            : `🔓 ${currentUser.email} has unlocked BOM Job contacts for 2 weeks.`,
           timestamp: firebase.firestore.FieldValue.serverTimestamp(),
         });
 
-        console.log("Admin notification sent for unlocked BOM job contacts.");
+        console.log("Admin notification sent for unlocked BOM job", amount === 50 ? "link" : "contacts");
       } catch (error) {
         console.error("Failed to send admin notification:", error);
       }
     }
   }, 3000);
 }
+
 
 
 
@@ -8590,6 +8556,7 @@ function attachMarketFormSubmit() {
   newForm.addEventListener("submit", submitMarketHandler);
 }
 
+
 async function loadMarketItems() {
   const container = document.getElementById("marketContainer");
   container.innerHTML = "";
@@ -8690,53 +8657,65 @@ async function loadMarketItems() {
         imageHTML = `<div style="width:100%; height:180px; background: #f0f0f0; border-radius:8px; margin-bottom:8px; display: flex; justify-content: center; align-items: center; color: #888; cursor: pointer;" onclick="openImageModal()">No Images</div>`;
       }
 
-      card.innerHTML = ` 
-        <h3 style="margin-bottom:6px; color:#2e7d32;">${d.posterName || "Unknown Seller"} ${verifiedBadge} ${boostBadge}</h3>
-        ${imageHTML}
-        <p style="color:#4caf50;">📦 <strong>Item name:</strong> ${d.name || "-"}</p>
-        <p style="color:#2196f3;">📝 <strong>Status:</strong> ${d.description || "-"}</p>
-        <p style="color:#e91e63;">🏷️ <strong>Category:</strong> ${d.category || "-"}</p>
-        <p style="color:#ff9800;">💰 <strong>Price:</strong> KES ${d.price ? parseInt(d.price).toLocaleString() : "N/A"}</p>
-        <p style="color:#9c27b0;">🧰 <strong>Condition:</strong> ${d.condition || "New"}</p>
-        <p style="color:#3f51b5;">📍 <strong>Location:</strong> ${d.county || "Unknown"}, ${d.subcounty || "Unknown"}</p>
-        <p style="color:#673ab7;">
-          📞 <strong>Contact:</strong> 
-          <a href="tel:${d.phone}" style="color:#673ab7;text-decoration:none;">${d.phone || "N/A"}</a>
-        </p>
-        ${verifyBtnHTML}
+    card.innerHTML = ` 
+  <h3 style="margin-bottom:6px; color:#2e7d32;">${d.posterName || "Unknown Seller"} ${verifiedBadge} ${boostBadge}</h3>
+  ${imageHTML}
+  <p style="color:#4caf50;">📦 <strong>Item name:</strong> ${d.name || "-"}</p>
 
-        <!-- Action Button (Toggle) -->
-        <div style="margin-top:10px;">
-          <button onclick="toggleAction('${id}')" style="background:#2196F3;color:#fff;border:none;border-radius:5px;padding:6px 12px;">
-            🛠️ Action
-          </button>
-          <div id="action-buttons-${id}" style="display:none; margin-top:10px; flex-direction:column; gap:8px;">
-            ${isPoster || isAdmin ? `
-              <button onclick="openMarketChat('${d.firebaseUid || d.phone}', '${d.posterName || 'Seller'}')" style="background:#673ab7;color:#fff;border:none;border-radius:5px;padding:6px 12px;">💬 View Chat</button>
-              <button onclick="toggleSoldStatus('${id}')" style="background:#9e9e9e;color:#fff;border:none;border-radius:5px;padding:6px 12px;">${d.isSold ? "❌ Sold Out" : "✅ Mark as Sold"}</button>
-              <button onclick="openAllReviewsModal('${id}')" style="background:#03a9f4;color:#fff;border:none;border-radius:6px;padding:6px 12px;">💬 View All Reviews</button>
-              <button onclick="deleteMarketItem('${id}')" style="background:#dc3545;color:#fff;border:none;border-radius:6px;padding:6px 12px;">🗑️ Delete</button>
-              <button onclick="boostMarketItem('${id}')" style="background:#ff9800;color:#fff;border:none;border-radius:6px;padding:6px 12px;">🚀 Boost</button>
-              ${isExpired ? `<button onclick="renewBoost('${id}')" style="background:#ff9800;color:#fff;border:none;border-radius:6px;padding:6px 12px;">🔄 Renew Boost</button>` : ""}
-              <button onclick="openEditForm('${id}')" style="background:#673ab7;color:#fff;border:none;border-radius:6px;padding:6px 12px;">✏️ Edit Item</button>
-            ` : ""}
+  <!-- Hidden More Details -->
+  <div id="more-${id}" style="display:none; margin-top:8px;">
+    <p style="color:#2196f3;">📝 <strong>Status:</strong> ${d.description || "-"}</p>
+    <p style="color:#e91e63;">🏷️ <strong>Category:</strong> ${d.category || "-"}</p>
+    <p style="color:#ff9800;">💰 <strong>Price:</strong> KES ${d.price ? parseInt(d.price).toLocaleString() : "N/A"}</p>
+    <p style="color:#9c27b0;">🧰 <strong>Condition:</strong> ${d.condition || "New"}</p>
+    <p style="color:#3f51b5;">📍 <strong>Location:</strong> ${d.county || "Unknown"}, ${d.subcounty || "Unknown"}</p>
+  </div>
 
-            ${(!isPoster && currentUser) ? ` 
-              <button onclick="showMarketInterest('${id}')" style="background:#f44336;color:#fff;border:none;border-radius:5px;padding:6px 12px;">💬 Interest</button>
-              <button onclick="reportMarketItem('${id}')" style="background:#ff1744;color:#fff;border:none;border-radius:5px;padding:6px 12px;">🚩 Report</button>
-              <button onclick="openMarketChat('${d.firebaseUid || d.phone}', '${d.posterName || 'Seller'}')" style="background:#673ab7;color:#fff;border:none;border-radius:5px;padding:6px 12px;">💬 Chat</button>
-              <button onclick="openReviewModal('${id}')" style="background:#4CAF50;color:#fff;border:none;border-radius:5px;padding:6px 12px;">📝 Review</button>
-            ` : ""}
-          </div>
-        </div>
+  <!-- Toggle Button -->
+  <button onclick="toggleMore('${id}', this)" 
+    style="background:#009688; color:white; border:none; padding:6px 12px; border-radius:6px; margin-top:6px;">
+    ➕ More
+  </button>
 
-        <!-- WhatsApp Button -->
-        <div style="margin-top:10px;">
-          <button onclick="window.open('https://wa.me/${d.phone}', '_blank')" style="background:#25D366;color:#fff;border:none;border-radius:5px;padding:6px 12px;">
-            📱 Contact on WhatsApp
-          </button>
-        </div>
-      `;
+  <p style="color:#673ab7; margin-top:10px;">
+    📞 <strong>Contact:</strong> 
+    <a href="tel:${d.phone}" style="color:#673ab7;text-decoration:none;">${d.phone || "N/A"}</a>
+  </p>
+  ${verifyBtnHTML}
+
+  <!-- Action Button (Toggle) -->
+  <div style="margin-top:10px;">
+    <button onclick="toggleAction('${id}')" style="background:#2196F3;color:#fff;border:none;border-radius:5px;padding:6px 12px;">
+      🛠️ Action
+    </button>
+    <div id="action-buttons-${id}" style="display:none; margin-top:10px; flex-direction:column; gap:8px;">
+      ${isPoster || isAdmin ? `
+        <button onclick="openMarketChat('${d.firebaseUid || d.phone}', '${d.posterName || 'Seller'}')" style="background:#673ab7;color:#fff;border:none;border-radius:5px;padding:6px 12px;">💬 View Chat</button>
+        <button onclick="toggleSoldStatus('${id}')" style="background:#9e9e9e;color:#fff;border:none;border-radius:5px;padding:6px 12px;">${d.isSold ? "❌ Sold Out" : "✅ Mark as Sold"}</button>
+        <button onclick="openAllReviewsModal('${id}')" style="background:#03a9f4;color:#fff;border:none;border-radius:6px;padding:6px 12px;">💬 View All Reviews</button>
+        <button onclick="deleteMarketItem('${id}')" style="background:#dc3545;color:#fff;border:none;border-radius:6px;padding:6px 12px;">🗑️ Delete</button>
+        <button onclick="boostMarketItem('${id}')" style="background:#ff9800;color:#fff;border:none;border-radius:6px;padding:6px 12px;">🚀 Boost</button>
+        ${isExpired ? `<button onclick="renewBoost('${id}')" style="background:#ff9800;color:#fff;border:none;border-radius:6px;padding:6px 12px;">🔄 Renew Boost</button>` : ""}
+        <button onclick="openEditForm('${id}')" style="background:#673ab7;color:#fff;border:none;border-radius:6px;padding:6px 12px;">✏️ Edit Item</button>
+      ` : ""}
+
+      ${(!isPoster && currentUser) ? ` 
+        <button onclick="showMarketInterest('${id}')" style="background:#f44336;color:#fff;border:none;border-radius:5px;padding:6px 12px;">💬 Interest</button>
+        <button onclick="reportMarketItem('${id}')" style="background:#ff1744;color:#fff;border:none;border-radius:5px;padding:6px 12px;">🚩 Report</button>
+        <button onclick="openMarketChat('${d.firebaseUid || d.phone}', '${d.posterName || 'Seller'}')" style="background:#673ab7;color:#fff;border:none;border-radius:5px;padding:6px 12px;">💬 Chat</button>
+        <button onclick="openReviewModal('${id}')" style="background:#4CAF50;color:#fff;border:none;border-radius:5px;padding:6px 12px;">📝 Review</button>
+      ` : ""}
+    </div>
+  </div>
+
+  <!-- WhatsApp Button -->
+  <div style="margin-top:10px;">
+    <button onclick="window.open('https://wa.me/${d.phone}', '_blank')" style="background:#25D366;color:#fff;border:none;border-radius:5px;padding:6px 12px;">
+      📱 Contact on WhatsApp
+    </button>
+  </div>
+`;
+
 
       container.appendChild(card);
       updateAverageRating(id);
@@ -8759,6 +8738,19 @@ function toggleAction(itemId) {
   const isVisible = actionButtons.style.display === 'block';
   actionButtons.style.display = isVisible ? 'none' : 'block';
 }
+
+
+function toggleMore(id, btn) {
+  const moreDiv = document.getElementById(`more-${id}`);
+  if (moreDiv.style.display === "none") {
+    moreDiv.style.display = "block";
+    btn.textContent = "➖ Less";
+  } else {
+    moreDiv.style.display = "none";
+    btn.textContent = "➕ More";
+  }
+}
+
 
 
 
@@ -10562,23 +10554,31 @@ function filterMarketItems() {
 }
 function showPaymentModalFor(type, amount, itemId, itemName) {
   // ✅ Decide modal title dynamically
-  let titleText = "Pay to Unlock ";
+  let titleText = "";
+  let bodyText = "";
 
   if (type === "boost") {
-    titleText = "Pay to Boost";  // For boost, change title
-  }
+    titleText = "Pay to Boost";
+    bodyText = `Pay Ksh ${amount} to boost your job "${itemName}".`;
+  } 
   else if (type === "unlock") {
-    titleText = "Pay to Unlock Contacts";  // For unlock contacts, change title
-  }
-  else if (type === "swapVerification" || type === "serviceVerification" || type === "marketVerification" || type === "soulmateVerification") {
-    titleText = "Pay for Verification";  // For verification, change title to "Pay for Verification"
+    titleText = "Pay to Unlock Contacts";
+    bodyText = `Pay Ksh ${amount} to unlock contacts for "${itemName}".`;
+  } 
+  else if (type === "verify" || type === "swapVerification" || type === "serviceVerification" || type === "marketVerification" || type === "soulmateVerification") {
+    titleText = "Pay for Verification";  // Correct for verification
+    bodyText = `Pay Ksh ${amount} to get your job "${itemName}" verified.`;
+  } 
+  else {
+    titleText = "Payment";
+    bodyText = `Pay Ksh ${amount} for "${itemName}".`;
   }
 
   const modalHTML = `
     <div id="universalPayModal" class="modal" style="display:block; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999;">
       <div class="modal-content" style="margin:10% auto; padding:20px; background:#f9f9ff; border:2px solid #4CAF50; width:80%; max-width:400px; border-radius:10px; text-align:center; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
         <h3 style="color:#2c3e50;">${titleText}: <span style="color:#4CAF50;">${itemName}</span></h3>
-        <p style="font-size:16px;">Amount: <strong style="color:#388e3c;">Ksh ${amount}</strong></p>
+        <p style="font-size:16px;">${bodyText}</p>
         <input type="tel" id="universalPhone" placeholder="Enter your MPESA number (e.g. 0712345678)"
                style="padding: 10px; width:100%; margin-bottom:10px; border:1px solid #ccc; border-radius:6px;" />
         <button onclick="initiateStkPayment('${type}', ${amount}, '${itemId}', '${itemName}')"
@@ -10596,6 +10596,9 @@ function showPaymentModalFor(type, amount, itemId, itemName) {
   `;
   document.body.insertAdjacentHTML("beforeend", modalHTML);
 }
+
+
+
 
 
 
