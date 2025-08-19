@@ -2438,23 +2438,7 @@ button:hover {
   <img src="https://i.imgur.com/ld8vrze.jpeg" alt="Rasm" class="logo-img" style="width: 200px;">
   <img src="https://i.imgur.com/JTvf2AF.jpeg" alt="Rasm" class="logo-img" style="width: 200px;">
 </div>
-<h2>
-  <i class="fas fa-users" style="color:#3f51b5; margin-right: 8px;"></i>
-  📢 Advertise your service here! 
-  <a href="https://wa.me/254792755676" target="_blank" style="text-decoration: none;">Click Here To Chat 0792755676</a>
-</h2>
-<!-- Open Graph Meta Tags for social sharing -->
-<meta property="og:title" content="Teacher Swaps Kenya" />
-<meta property="og:description" content="Find your perfect teacher swap match across Kenya!" />
-<meta property="og:image" content="https://i.imgur.com/WKwJ73A.jpeg" />
-<meta property="og:url" content="https://rasmtech.github.io/Kenya-Nairobi-teachers-swaps/" />
-<meta property="og:type" content="website" />
 
-<!-- Twitter Card Meta Tags -->
-<meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Teacher Swaps Kenya" />
-<meta name="twitter:description" content="Find your perfect teacher swap match across Kenya!" />
-<meta name="twitter:image" content="https://i.imgur.com/WKwJ73A.jpeg" />
    </div>
     <div id="register" class="page" style="display:none;">
    <h2>
@@ -5615,31 +5599,52 @@ function renderBOMJobs(jobs) {
 // Contact section (phone/link with paywall)
 let contactSection = "";
 
+const hasPhone = job.phone && job.phone.trim() !== "";
+const hasContact = job.contact && job.contact.trim() !== "";
+
+// Helper: check if value is a phone number (digits, +, spaces, etc.)
+function looksLikePhone(val) {
+  return /^[\d+\s-]{6,}$/.test(val); 
+}
+
+// ✅ Admins, posters, and users with access see directly
 if (isPoster || isAdmin || hasAccess) {
-  // Admins and poster see contacts directly
-  contactSection = `
-    ${job.phone ? `
+  if (hasPhone) {
+    // Proper phone field
+    contactSection = `
       <p style="color:#009688; margin-bottom:8px;">
         <strong>Phone:</strong><br>
         <a href="tel:${job.phone}" style="color:white; background:#4caf50; padding:8px 12px; border-radius:6px; text-decoration:none;">
-          📞 Call
+          📞 ${job.phone}
         </a>
       </p>
-    ` : ""}
-
-    ${job.contact ? `
-      <p style="color:#009688; margin-bottom:8px;">
-        <strong>Apply Here:</strong><br>
-        <a href="${job.contact}" target="_blank" style="color:white; background:#2196f3; padding:8px 12px; border-radius:6px; text-decoration:none;">
-          🔗 Application Link
-        </a>
-      </p>
-    ` : ""}
-  `;
+    `;
+  } else if (hasContact) {
+    // Detect whether contact is phone or link
+    if (looksLikePhone(job.contact)) {
+      contactSection = `
+        <p style="color:#009688; margin-bottom:8px;">
+          <strong>Phone:</strong><br>
+          <a href="tel:${job.contact}" style="color:white; background:#4caf50; padding:8px 12px; border-radius:6px; text-decoration:none;">
+            📞 ${job.contact}
+          </a>
+        </p>
+      `;
+    } else {
+      contactSection = `
+        <p style="color:#009688; margin-bottom:8px;">
+          <strong>Application Link:</strong><br>
+          <a href="${job.contact}" target="_blank" style="color:white; background:#2196f3; padding:8px 12px; border-radius:6px; text-decoration:none;">
+            🔗 Open Link
+          </a>
+        </p>
+      `;
+    }
+  }
 } else {
-  // Regular users: show paywall
-  contactSection = `
-    ${job.phone ? `
+  // ❌ Regular users without access -> paywall
+  if (hasPhone) {
+    contactSection = `
       <div class="blurred">
         <p style="color:gray;">🔒 Phone contacts – Pay Ksh 350 to unlock</p>
       </div>
@@ -5647,19 +5652,32 @@ if (isPoster || isAdmin || hasAccess) {
         style="color:white; background:#4caf50; padding:8px 12px; border-radius:6px; border:none; cursor:pointer;">
         💳 Unlock Phone (Ksh 350)
       </button>
-    ` : ""}
-
-    ${job.contact ? `
-      <div class="blurred">
-        <p style="color:gray;">🔒 Application link – Pay Ksh 50 to unlock</p>
-      </div>
-      <button onclick="unlockBomJobs('${job.id}', 50)" 
-        style="color:white; background:#2196f3; padding:8px 12px; border-radius:6px; border:none; cursor:pointer;">
-        💳 Unlock Link (Ksh 50)
-      </button>
-    ` : ""}
-  `;
+    `;
+  } else if (hasContact) {
+    if (looksLikePhone(job.contact)) {
+      contactSection = `
+        <div class="blurred">
+          <p style="color:gray;">🔒 Phone contacts – Pay Ksh 350 to unlock</p>
+        </div>
+        <button onclick="unlockBomJobs('${job.id}', 350)" 
+          style="color:white; background:#4caf50; padding:8px 12px; border-radius:6px; border:none; cursor:pointer;">
+          💳 Unlock Phone (Ksh 350)
+        </button>
+      `;
+    } else {
+      contactSection = `
+        <div class="blurred">
+          <p style="color:gray;">🔒 Application link – Pay Ksh 50 to unlock</p>
+        </div>
+        <button onclick="unlockBomJobs('${job.id}', 50)" 
+          style="color:white; background:#2196f3; padding:8px 12px; border-radius:6px; border:none; cursor:pointer;">
+          💳 Unlock Link (Ksh 50)
+        </button>
+      `;
+    }
+  }
 }
+
 
 
     // Action buttons
@@ -10597,12 +10615,6 @@ function showPaymentModalFor(type, amount, itemId, itemName) {
   document.body.insertAdjacentHTML("beforeend", modalHTML);
 }
 
-
-
-
-
-
-
 function closeUniversalModal() {
   const modal = document.getElementById("universalPayModal");
   if (modal) modal.remove();
@@ -10743,146 +10755,6 @@ function payForVerification(type, itemId, itemName) {
 
   showPaymentModalFor(type, amount, itemId, itemName);
 }
-
-
-async function findMatchingSwaps() {
-  if (!isLoggedIn || !currentUser) {
-    showCustomAlert("You must be logged in to check swaps.", "error");
-    return;
-  }
-
-  try {
-    const swapsSnapshot = await db.collection("teacherSwaps").get();
-    const swaps = [];
-
-    // Collect all swaps
-    swapsSnapshot.forEach(doc => {
-      swaps.push({ id: doc.id, ...doc.data() });
-    });
-
-    // Check for matches
-    const matches = [];
-    swaps.forEach((swap1, index) => {
-      swaps.forEach((swap2, idx) => {
-        if (
-          index !== idx &&
-          swap1.subjectCombination === swap2.subjectCombination &&
-          swap1.county === swap2.swapCounty &&
-          swap1.swapCounty === swap2.county
-        ) {
-          matches.push(swap1);
-        }
-      });
-    });
-
-    if (matches.length > 0) {
-      populateMatchesModal(matches);
-    } else {
-      showCustomAlert("No matching swaps found.", "info");
-    }
-  } catch (error) {
-    console.error("Error finding matches:", error);
-    showCustomAlert("Error finding matches: " + error.message, "error");
-  }
-}
-
-function populateMatchesModal(matches) {
-  const matchesList = document.getElementById("matchesList");
-  matchesList.innerHTML = ""; // Clear previous entries
-
-  matches.forEach(match => {
-    const matchDiv = document.createElement("div");
-    matchDiv.style.margin = "10px 0";
-    matchDiv.innerHTML = `
-      <p><strong>Name:</strong> ${match.teacherName}</p>
-      <p><strong>Phone:</strong> ${match.phone}</p>
-      <p><strong>Subjects:</strong> ${match.subjectCombination}</p>
-      <p><strong>County:</strong> ${match.county}</p>
-      <p><strong>Wants to Swap to:</strong> ${match.swapCounty}</p>
-      <hr>
-    `;
-    matchesList.appendChild(matchDiv);
-  });
-
-  document.getElementById("matchesModal").style.display = "flex";
-}
-
-function closeMatchesModal() {
-  document.getElementById("matchesModal").style.display = "none";
-}
-async function findTriangularSwaps() {
-  if (!isLoggedIn || !currentUser) {
-    showCustomAlert("You must be logged in to check triangular swaps.", "error");
-    return;
-  }
-
-  try {
-    const swapsSnapshot = await db.collection("teacherSwaps").get();
-    const swaps = [];
-
-    // Collect all swaps
-    swapsSnapshot.forEach(doc => {
-      swaps.push({ id: doc.id, ...doc.data() });
-    });
-
-    // Find triangular swaps
-    const triangularSwaps = [];
-    swaps.forEach((swapA, indexA) => {
-      swaps.forEach((swapB, indexB) => {
-        if (
-          indexA !== indexB &&
-          swapA.swapCounty === swapB.county &&
-          swapA.county !== swapB.swapCounty
-        ) {
-          swaps.forEach((swapC, indexC) => {
-            if (
-              indexB !== indexC &&
-              swapB.swapCounty === swapC.county &&
-              swapC.swapCounty === swapA.county
-            ) {
-              triangularSwaps.push([swapA, swapB, swapC]);
-            }
-          });
-        }
-      });
-    });
-
-    if (triangularSwaps.length > 0) {
-      populateTriangularSwapsModal(triangularSwaps);
-    } else {
-      showCustomAlert("No triangular swaps found.", "info");
-    }
-  } catch (error) {
-    console.error("Error finding triangular swaps:", error);
-    showCustomAlert("Error finding triangular swaps: " + error.message, "error");
-  }
-}
-
-function populateTriangularSwapsModal(triangularSwaps) {
-  const swapsList = document.getElementById("triangularSwapsList");
-  swapsList.innerHTML = ""; // Clear previous entries
-
-  triangularSwaps.forEach(([swapA, swapB, swapC]) => {
-    const swapDiv = document.createElement("div");
-    swapDiv.style.margin = "10px 0";
-    swapDiv.innerHTML = `
-      <div>
-        <p><strong>Teacher A:</strong> ${swapA.teacherName} (${swapA.county} ? ${swapA.swapCounty})</p>
-        <p><strong>Teacher B:</strong> ${swapB.teacherName} (${swapB.county} ? ${swapB.swapCounty})</p>
-        <p><strong>Teacher C:</strong> ${swapC.teacherName} (${swapC.county} ? ${swapC.swapCounty})</p>
-      </div>
-      <hr>
-    `;
-    swapsList.appendChild(swapDiv);
-  });
-
-  document.getElementById("triangularSwapsModal").style.display = "flex";
-}
-
-// Close modal functionality
-document.getElementById("closeTriangularSwapsModal").addEventListener("click", () => {
-  document.getElementById("triangularSwapsModal").style.display = "none";
-});
 
 function showToast(message, type = "info") {
   const toast = document.createElement("div");
@@ -11171,120 +11043,8 @@ async function markAsVIPSwap(swapId) {
   }
 }
 
-async function showHotSwaps() {
-  try {
-    const snapshot = await db.collection("teacherSwaps").get();
-    const vipCandidates = [];
 
-    snapshot.forEach(doc => {
-      const s = doc.data();
-      if (
-        (hotCounties.includes(s.county) || hotCounties.includes(s.swapCounty)) &&
-        !s.isVIP
-      ) {
-        vipCandidates.push({ id: doc.id, ...s });
-      }
-    });
 
-    renderSwaps(vipCandidates); // This renders hot swap candidates only
-  } catch (err) {
-    showCustomAlert("❌ Failed to load hot swaps: " + err.message, "error");
-  }
-}
-
-async function showVipSwaps() {
-  if (!isLoggedIn) {
-    return showCustomAlert("Please login to view VIP swaps.", "error");
-  }
-
-  await loadUserPaymentStatus(); // make sure payment flags are set
-
-  const container = document.getElementById("vipSwapsList");
-  container.innerHTML = "<p>Loading VIP swaps...</p>";
-  document.getElementById("vipSwapsModal").style.display = "block";
-
-  try {
-    const snapshot = await db.collection("teacherSwaps")
-      .orderBy("timestamp", "desc")
-      .get();
-
-    if (snapshot.empty) {
-      container.innerHTML = "<p>No VIP swaps available at the moment.</p>";
-      return;
-    }
-
-    let html = `<div style="display:flex; flex-wrap:wrap; gap:10px;">`;
-    snapshot.forEach(doc => {
-      const s = doc.data();
-
-      // 🔥 Auto-VIP if from/to counties are in hot list
-      const isVip = s.isVIP || hotCounties.includes(s.county) || hotCounties.includes(s.swapCounty);
-
-      if (!isVip) return; // Only show swaps considered VIP
-
-      const name = s.teacherName || "-";
-      const school = s.category || "-";
-      const subject = s.subjectCombination || "-";
-      const from = `${s.county || '-'} (${s.subCounty || '-'})`;
-      const to = `${s.swapCounty || '-'} (${s.swapSubCounty || '-'})`;
-
-      let phoneDisplay = "";
-
-      if (isAdmin || hasPaidVip1000) {
-        phoneDisplay = `<p><strong>📞 Phone:</strong> <a href="tel:${s.phone}" style="color:green;">${s.phone}</a></p>`;
-      } else {
-        phoneDisplay = `
-          <p><strong>📞 Phone:</strong> 
-            <button onclick="promptVipPayment()" style="background:crimson; color:white; border:none; padding:6px 10px; border-radius:5px;">
-              💰 Pay KES 1000 to Unlock VIP
-            </button>
-          </p>`;
-      }
-
-      html += `
-        <div style="border:1px solid #ddd; padding:10px; border-radius:8px; width:260px;">
-          <p><strong>👤 Name:</strong> ${name}</p>
-          <p><strong>🏫 School Type:</strong> ${school}</p>
-          <p><strong>📚 Subject(s):</strong> ${subject}</p>
-          <p><strong>🔁 Swap From:</strong> ${from}</p>
-          <p><strong>➡️ Swap To:</strong> ${to}</p>
-          ${phoneDisplay}
-        </div>
-      `;
-    });
-
-    html += `</div>`;
-    container.innerHTML = html;
-
-  } catch (err) {
-    container.innerHTML = `<p style="color:red;">Failed to load VIP swaps: ${err.message}</p>`;
-  }
-}
-
-function promptVipPayment() {
-  const confirmPayment = confirm("To unlock all VIP swaps, please pay KES 1000 to Paybill 123456, Account: VIPACCESS. Have you completed payment?");
-  if (confirmPayment) {
-    // Simulate update (replace with actual admin approval logic)
-    db.collection("users").doc(currentUserId).update({
-      hasPaidVip1000: true
-    }).then(() => {
-      hasPaidVip1000 = true;
-      showCustomAlert("VIP access unlocked. Please reopen the VIP swaps.", "success");
-    }).catch(err => {
-      showCustomAlert("Error unlocking VIP access: " + err.message, "error");
-    });
-  }
-}
-async function loadUserPaymentStatus() {
-  if (!currentUserId) return;
-
-  const userDoc = await db.collection("users").doc(currentUserId).get();
-  const data = userDoc.data();
-
-  hasPaid100 = data?.hasPaid100 || false;
-  hasPaidVip1000 = data?.hasPaidVip1000 || false;
-  isAdmin = data?.role === "admin"; // optional
-}
 
 // ✅ Toast confirmation helper
 function showToastConfirm(message, onConfirm) {
@@ -11679,205 +11439,7 @@ async function deleteNotification(id) {
   };
 }
 
-async function rateService(serviceId, stars) {
-  if (!currentUser) {
-    showCustomAlert("Error", "Please login to rate.");
-    return;
-  }
-  
-  const userId = currentUser.uid;
-  const ratingRef = db.collection("ratings").doc(serviceId).collection("byUser").doc(userId);
 
-  const existing = await ratingRef.get();
-  if (existing.exists) {
-    showCustomAlert("Error", "You already rated this service.");
-    return;
-  }
-
-  // Show the spinner before the operation begins
-  document.getElementById('loadingSpinner').style.display = 'flex';
-
-  try {
-    // Perform the rating
-    await ratingRef.set({
-      stars,
-      ratedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    // Update the average rating
-    updateAverageRating(serviceId);
-
-    // Show success alert
-    showCustomAlert("Success", "Your rating has been submitted.");
-  } catch (err) {
-    // Show error alert if the operation fails
-    console.error("Error submitting rating:", err);
-    showCustomAlert("Error", "Failed to submit your rating. Please try again.");
-  } finally {
-    // Hide the spinner after the operation is complete
-    document.getElementById('loadingSpinner').style.display = 'none';
-  }
-}
-
-
-async function updateAverageRating(serviceId) {
-  const ratingSnap = await db.collection("ratings").doc(serviceId).collection("byUser").get();
-  const total = ratingSnap.docs.reduce((sum, doc) => sum + doc.data().stars, 0);
-  const count = ratingSnap.size;
-  const avg = count ? (total / count).toFixed(1) : "No ratings yet";
-
-  document.getElementById(`avgRating-${serviceId}`).innerText = `⭐ ${avg} (${count})`;
-
-  // Fill stars based on average
-  for (let i = 1; i <= 5; i++) {
-    const starEl = document.getElementById(`star-${serviceId}-${i}`);
-    if (starEl) starEl.style.color = i <= Math.round(avg) ? "#ffc107" : "#ccc";
-  }
-}
-
-document.querySelector('#notifBadge').addEventListener('click', function() {
-  showPage('messages'); // Open the messages page
-  resetUnreadCount(); // Reset unread count to 0
-});
-
-function openPostedItem(type, itemId) {
-  if (!type || !itemId) return;
-
-  showPage(type); // Switch to the relevant page/tab
-
-  let retries = 10; // retry every 200ms for 2 seconds
-  const targetId = `${type}-${itemId}`;
-
-  const tryScroll = () => {
-    const target = document.getElementById(targetId);
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
-      target.style.transition = "background-color 0.5s ease";
-      target.style.backgroundColor = "#fff9c4";
-      setTimeout(() => {
-        target.style.backgroundColor = "";
-      }, 2000);
-    } else if (retries > 0) {
-      retries--;
-      setTimeout(tryScroll, 200);
-    } else {
-      alert("❌ Item not found. It may not have loaded yet.");
-    }
-  };
-
-  tryScroll();
-}
-
-function toggleEmojiPicker() {
-  const picker = document.getElementById("emojiPicker");
-  picker.style.display = picker.style.display === "block" ? "none" : "block";
-  if (picker.innerHTML === '') populateEmojiPicker();
-}
-
-function populateEmojiPicker() {
-  const picker = document.getElementById("emojiPicker");
-  const emojis = ['😀','😁','😂','😅','😊','😍','😎','😢','😭','😡','😇','🤔','👍','🙏','💯','🔥','🎉','📱','💬','🕒','💖'];
-  emojis.forEach(e => {
-    const span = document.createElement("span");
-    span.textContent = e;
-    span.style.margin = "5px";
-    span.style.fontSize = "20px";
-    span.style.cursor = "pointer";
-    span.onclick = () => {
-      document.getElementById("chatInput").value += e;
-      toggleEmojiPicker();
-    };
-    picker.appendChild(span);
-  });
-}
-
-document.addEventListener('click', function(e) {
-  const picker = document.getElementById("emojiPicker");
-  if (picker && !picker.contains(e.target) && e.target.innerText !== '😀') {
-    picker.style.display = "none";
-  }
-});
-
-let previewFile = null;
-
-function previewImage(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = function (e) {
-    document.getElementById('imagePreview').src = e.target.result;
-    document.getElementById('imagePreviewContainer').style.display = 'block';
-  };
-  reader.readAsDataURL(file);
-  previewFile = file;
-}
-
-function clearPreview() {
-  previewFile = null;
-  document.getElementById('mediaInput').value = ''; // Clear the file input
-  document.getElementById('imagePreviewContainer').style.display = 'none'; // Hide preview
-}
-
-let recorder, audioBlob;
-
-async function toggleRecording() {
-  const recordBtn = document.getElementById("recordBtn");
-
-  if (!recorder) {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recorder = new MediaRecorder(stream);
-    const chunks = [];
-
-    recorder.ondataavailable = e => chunks.push(e.data);
-    recorder.onstop = async () => {
-      audioBlob = new Blob(chunks, { type: 'audio/webm' });
-      const storageRef = firebase.storage().ref(`voice_notes/${Date.now()}.webm`);
-      await storageRef.put(audioBlob);
-      const audioURL = await storageRef.getDownloadURL();
-      await sendVoiceMessage(audioURL);
-      recorder = null;
-    };
-
-    recorder.start();
-    recordBtn.textContent = "⏹ Stop";
-  } else {
-    recorder.stop();
-    recordBtn.textContent = "🎤";
-  }
-}
-
-async function sendVoiceMessage(url) {
-  const fromName = currentUser.displayName || currentUser.email;
-  const timestamp = firebase.firestore.FieldValue.serverTimestamp();
-
-  await db.collection("messages").doc(chatConversationId).collection("chats").add({
-    from: fromName,
-    fromUid: currentUser.uid,
-    to: chatPartner.name,
-    toUid: chatPartner.uid,
-    type: "audio",
-    content: url,
-    read: false,
-    timestamp
-  });
-
-  showCustomAlert("🎤 Voice note sent!", "success");
-}
-function shareLocation() {
-  if (!navigator.geolocation) {
-    alert("Geolocation is not supported");
-    return;
-  }
-
-  navigator.geolocation.getCurrentPosition(position => {
-    const link = `https://www.google.com/maps?q=${position.coords.latitude},${position.coords.longitude}`;
-    document.getElementById("chatInput").value = `My location: ${link}`;
-    sendChatMessage('text');
-  }, () => {
-    alert("Failed to get your location");
-  });
-}
 // Shows the alert popup
 function showAlert(message) {
   // Check if an alert is already visible
